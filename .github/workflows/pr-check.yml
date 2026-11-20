@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: OpenCode parity check
+        run: node scripts/sync-opencode.mjs --check
+
       - name: Generate Prisma client
         run: cd api && pnpm exec prisma generate
 

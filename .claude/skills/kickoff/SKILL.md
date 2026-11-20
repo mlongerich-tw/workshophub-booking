@@ -1,9 +1,9 @@
 ---
 name: kickoff
-description: Start work on a WorkshopHub Jira story. Reads an LATC card, creates (or reuses) the user's personal copy in In Development, saves the story to ./stories, and checks out a latc-{id}-{desc} branch. Never edits, changes or moves the original card.
+description: Start work on a WorkshopHub Jira story. Reads an LATC card, creates (or reuses) the user's personal copy in the In Development column, saves the story to ./stories, and checks out a latc-{id}-{desc} branch. Never edits, changes or moves the original card (the only exception is the "clones" link).
 argument-hint: LATC-<n>
 disable-model-invocation: true
-allowed-tools: AskUserQuestion, Bash, mcp__jira__getJiraIssue, mcp__jira__editJiraIssue, mcp__jira__createJiraIssue, mcp__jira__transitionJiraIssue, mcp__jira__addOrEditJiraIssueComment, mcp__jira__atlassianUserInfo, mcp__jira__searchJiraIssuesUsingJql, mcp__jira__getAccessibleAtlassianResources, mcp__jira__discover, mcp__jira__executeRead
+allowed-tools: AskUserQuestion, Bash, mcp__jira__getJiraIssue, mcp__jira__editJiraIssue, mcp__jira__createJiraIssue, mcp__jira__transitionJiraIssue, mcp__jira__addOrEditJiraIssueComment, mcp__jira__atlassianUserInfo, mcp__jira__searchJiraIssuesUsingJql, mcp__jira__getAccessibleAtlassianResources, mcp__jira__discover, mcp__jira__executeRead, mcp__jira__executeWrite
 ---
 
 # Kickoff
@@ -13,10 +13,28 @@ Start work on one LATC story, then stop. Follow the steps in order.
 ## Hard rules
 
 - **NEVER edit, change, transition, comment on or otherwise write to the original card.** Every Jira write goes to the user's copy only. Before each write, check that the target key is not the original key. If it is, stop.
+- **The only exception** is the `Cloners` issue link created in step 7. It is created from the copy, but Jira also shows it on the original ("is cloned by LATC-<m>"). It is the only allowed effect on the original. Never pass the link's optional `comment` input, because that comment would be posted on the original.
 - `editJiraIssue` is only for the copy, never the original.
+- `executeWrite` is only for `createJiraIssueLink`. Use it for nothing else.
 - Use AskUserQuestion for anything unclear. Don't guess card numbers, names or statuses.
 - Never push, and never commit. This command ends with a checked-out branch.
 - Jira site: `thoughtworks.atlassian.net` (pass it as `cloudId`). If it is rejected, call `getAccessibleAtlassianResources` once and use the returned cloudId.
+
+## Board columns vs statuses
+
+"In Development" is a **board column**, not a Jira status. On the LATC board (id 22687), the column maps to these statuses:
+
+| Board column | Statuses |
+|---|---|
+| To Do | Backlog, In Analysis / Design |
+| Ready for Development | READY FOR DEVELOPMENT |
+| **In Development** | **In Progress**, Blocked / On Hold |
+| In Review | In Review |
+| Done | Done |
+
+- A card is "in In Development" if its status is `In Progress` or `Blocked / On Hold`.
+- "Move to In Development" means transitioning to the status **`In Progress`**.
+- If the mapping looks wrong (for example, no `In Progress` transition exists), recheck it: `discover` "get jira board configuration", then `executeRead` `getJiraBoardConfig` with `boardId: 22687`. Ask if it is still unclear.
 
 ## Steps
 
@@ -29,23 +47,30 @@ Run `git status --short`.
 - Uncommitted changes → ask whether to stop, or to carry the changes onto the new branch. Don't stash or discard anything without a yes.
 
 ### 3. Read the original card
-Call `getJiraIssue` with `issueIdOrKey: LATC-<n>` and `view: "evidence"`. Note the summary, issue type, status, description, acceptance criteria and labels.
+Call `getJiraIssue` with `issueIdOrKey: LATC-<n>` and `view: "evidence"`. Note the summary, issue type, status, description, acceptance criteria, labels and issue links.
 - Not found → tell the user and stop.
-- The card is itself a copy (summary starts with `[`, or description starts with `Copied from LATC-`) → ask whether they meant the original it was copied from.
+- The card is itself a copy (summary starts with `[`, description starts with `Copied from LATC-`, or it has a "clones" link) → ask whether they meant the original it was copied from.
 
 ### 4. Identify the user
-Call `atlassianUserInfo` and take the display name as `<Name>`. If it is missing, ask.
+`atlassianUserInfo` returns only an accountId, not a name. Instead, call `executeRead` with `name: "getJiraCurrentUser"` and `inputs: {}` (use `discover` "get current jira user" if the name is rejected), and take `displayName` as `<Name>`.
+- No display name → ask with AskUserQuestion.
 
 ### 5. Find an existing copy
-Search with `searchJiraIssuesUsingJql`:
+Search with `searchJiraIssuesUsingJql`, requesting fields `summary`, `status`, `issuelinks`:
 ```
-project = LATC AND description ~ "\"Copied from LATC-<n>\"" ORDER BY created DESC
+project = LATC AND (issue in linkedIssues(LATC-<n>) OR description ~ "\"Copied from LATC-<n>\"") ORDER BY created DESC
 ```
-Keep only results whose summary is exactly `[<Name>] <original summary>`. Exclude the original key.
+Keep only results whose summary is exactly `[<Name>] <original summary>`. Exclude the original key. Note whether each kept copy already has a `Cloners` link to LATC-<n>.
 - More than one match → ask which copy to use.
 
 ### 6. Confirm the Jira write
-CLAUDE.md says to ask before any MCP write, so confirm with AskUserQuestion before writing. Say exactly which write will happen: "create copy `[<Name>] <summary>` and move it to In Development", "move copy LATC-<m> to In Development", or "comment on copy LATC-<m>". Options: proceed or cancel.
+CLAUDE.md says to ask before any MCP write, so confirm with AskUserQuestion before writing. List every write that will happen:
+- "create copy `[<Name>] <summary>`"
+- "link it as cloning LATC-<n> (the link also shows on LATC-<n>)", if the copy has no link yet
+- "move copy LATC-<m> to In Progress (In Development column)"
+- or "comment on copy LATC-<m>"
+
+Options: proceed or cancel.
 
 ### 7. Copy or comment
 **A. No copy exists:**
@@ -55,12 +80,18 @@ CLAUDE.md says to ask before any MCP write, so confirm with AskUserQuestion befo
 
    <original description, unchanged>
    ```
-2. Look up transitions for the **copy**: `discover` "list transitions for a Jira issue", then `executeRead` with the returned operation name and the copy's key. Pick the transition whose target status is `In Development`. None available → ask.
-3. `transitionJiraIssue` on the **copy** with that `transitionId`. Confirm that the returned status is `In Development`.
+2. Link the copy to the original with `executeWrite`:
+   ```
+   name: "createJiraIssueLink"
+   inputs: { linkType: "Cloners", inwardIssue: "LATC-<m>", outwardIssue: "LATC-<n>" }
+   ```
+   This reads "LATC-<m> clones LATC-<n>". Don't pass `comment`. If it fails, report the failure and continue; the copy is still usable.
+3. List transitions for the **copy**: `executeRead` `listJiraIssueTransitions` with the copy's key. Pick the transition whose `to.name` is `In Progress`. None available → ask.
+4. `transitionJiraIssue` on the **copy** with that `transitionId`. Confirm that the returned status is `In Progress`.
 
-**B. Copy exists and its status is not `In Development`:** run steps A.2–A.3 on the copy.
+**B. Copy exists and its status is not in the In Development column:** run A.2 (only if it has no `Cloners` link yet), then A.3–A.4 on the copy.
 
-**C. Copy exists and is already in `In Development`:** don't transition anything. Add a comment to the **copy** with `addOrEditJiraIssueComment`:
+**C. Copy exists and is already in the In Development column (`In Progress` or `Blocked / On Hold`):** don't transition anything. Run A.2 if the link is missing. Add a comment to the **copy** with `addOrEditJiraIssueComment`:
 ```
 Kickoff re-run by <Name> on <YYYY-MM-DD>. Branch: latc-<m>-<desc>.
 ```
@@ -73,7 +104,7 @@ Write `./stories/LATC-<m>.md` (create `stories/` if missing). Overwrite only aft
 # LATC-<m>: [<Name>] <original summary>
 
 - **Copy of:** LATC-<n>
-- **Status:** In Development
+- **Status:** <copy's status> (board column: In Development)
 - **Type:** <issue type>
 - **Jira:** https://thoughtworks.atlassian.net/browse/LATC-<m>
 
@@ -87,14 +118,14 @@ Write `./stories/LATC-<m>.md` (create `stories/` if missing). Overwrite only aft
 ```
 
 ### 9. Create the branch
-- `<desc>`: kebab-case slug of the original summary. Use lowercase a–z, 0–9 and hyphens only, drop filler words, and keep it to 5 words or fewer (e.g. `register-for-session`).
+- `<desc>`: kebab-case slug of the original summary. Use lowercase a–z, 0–9 and hyphens only, drop filler words, and keep it to 5 words or fewer (e.g. `register-for-training-session`).
 - Branch name: `latc-<m>-<desc>`.
 - Start from an up-to-date main: `git switch main && git pull --ff-only`, then `git switch -c latc-<m>-<desc>`.
 - Branch already exists → ask whether to check it out or choose another name.
 
 ### 10. Stop
 Run `git branch --show-current` and report:
-- the original key and the copy key, plus what was done in Jira (created+moved / moved / commented)
+- the original key and the copy key, plus what was done in Jira (created / linked / moved / commented)
 - the story file path
 - the branch name
 

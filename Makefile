@@ -2,7 +2,7 @@ SHELL := /bin/bash
 ROOT_DIR := $(shell pwd)
 API_DIR := $(ROOT_DIR)/api
 
-.PHONY: setup dev test test-unit lint format-check build seed reset-db smoke-test security prod-up prod-down prod-logs
+.PHONY: setup dev test test-unit lint format-check build seed reset-db smoke-test security prod-up prod-down prod-logs sync-opencode check-opencode
 
 ## setup: Install dependencies, generate Prisma client, push schema, seed database
 setup:
@@ -37,6 +37,14 @@ format-check:
 ## build: Build frontend and backend
 build:
 	pnpm run build
+
+## sync-opencode: Regenerate the OpenCode config from the Claude setup (Claude is the source of truth)
+sync-opencode:
+	node scripts/sync-opencode.mjs
+
+## check-opencode: Fail if the OpenCode config has drifted from the Claude setup
+check-opencode:
+	node scripts/sync-opencode.mjs --check
 
 ## seed: Seed the SQLite database with sample data
 seed:
