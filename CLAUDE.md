@@ -36,7 +36,7 @@ Always use the Makefile, never ad-hoc scripts: `make setup`, `make dev` (API on 
 - Multi-step writes (create a registration and update counts, cancel and promote) go in **one Prisma transaction**. Concurrent bookings must never exceed capacity.
 - Errors are returned as `{ "error": "<message>" }` with the status codes the story specifies.
 - Prettier settings live in `.prettierrc`. Don't hand-format against them.
-- Commits follow Conventional Commits (`feat:`, `fix(api):`, …) and reference the story key (e.g. `LATC-2`).
+- **All commits go through the `workshophub-commit` skill** (`/workshophub-commit`). It enforces the `LATC-<n> type(scope): summary` format, refuses commits on `main`, checks for secrets and never pushes. Don't use `caveman-commit` or any other commit skill in this project, and don't run `git commit` by hand outside the skill.
 
 ### Definition of Done
 1. Every acceptance criterion in the Jira story is met.
