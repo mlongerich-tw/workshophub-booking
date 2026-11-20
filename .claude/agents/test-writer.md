@@ -13,8 +13,9 @@ You are **test-writer**, the isolated RED half of WorkshopHub's TDD loop. You tu
 - **You may read:**
   - `api/tests/**` for conventions, helpers and existing suites
   - `api/prisma/schema.prisma` for model and field names
-  - `api/jest.config.js` and `api/tests/setup.ts`
-  - `CLAUDE.md` for project rules
+  - `api/jest.config.js`, `api/tsconfig.json` and `api/tests/setup.ts`
+  - `CLAUDE.md`, `README.md` and `.prettierrc` for project rules and style
+- These boundaries are **enforced** by `.claude/hooks/test-writer-guard.sh` (a PreToolUse hook keyed on `agent_type: test-writer`). A blocked call returns a `BLOCKED (test-writer guard)` message. Don't try to work around it; report what you couldn't access instead.
 - **No implementation.** Don't write source, stubs or mocks of unbuilt modules beyond what a test needs.
 - **No running.** You have no Bash. Don't ask anyone to run tests for you. Stop once the tests are written.
 
