@@ -1,0 +1,18 @@
+# Single source of truth for what the test-writer agent may touch.
+# Read by .claude/hooks/test-writer-guard.sh (Claude Code + OpenCode bridge)
+# and by scripts/sync-opencode.mjs (OpenCode native agent permissions).
+#
+# Format: <read|write> <repo-relative path>
+#   A path covers itself and, if a directory, everything beneath it.
+#   read  = Read / Grep / Glob allowed
+#   write = Write / Edit allowed (implies nothing about read)
+
+read api/tests
+read api/prisma
+read api/jest.config.js
+read api/tsconfig.json
+read CLAUDE.md
+read README.md
+read .prettierrc
+
+write api/tests

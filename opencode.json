@@ -11,5 +11,9 @@
         }
       }
     }
-  }
+  },
+  "instructions": [
+    "README.md",
+    "api/prisma/schema.prisma"
+  ]
 }

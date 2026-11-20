@@ -34,6 +34,11 @@
             "command": "input=\"$(cat)\"; printf '%s' \"$input\" | \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/prettier-edited.sh; printf '%s' \"$input\" | \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/eslint-edited.sh",
             "timeout": 60,
             "statusMessage": "Prettier + ESLint on edited file..."
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/scripts/sync-opencode.mjs --hook",
+            "timeout": 30
           }
         ]
       }
