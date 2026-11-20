@@ -1,4 +1,7 @@
 {
+  "skillOverrides": {
+    "caveman:caveman-commit": "off"
+  },
   "hooks": {
     "PostToolUse": [
       {
