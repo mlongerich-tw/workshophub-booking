@@ -10,10 +10,26 @@
 # Exit 2 blocks the tool call and tells the agent why.
 set -uo pipefail
 
-root="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 input="$(cat)"
 
-[[ "$(printf '%s' "$input" | jq -r '.agent_type // empty')" == "test-writer" ]] || exit 0
+# Identify the calling agent. agent_type is what Claude Code sends today; the
+# alternatives are tolerated in case the field is renamed. If detection ever
+# breaks entirely, the agent's canary read (see test-writer.md) reports
+# GUARD INACTIVE and /tdd halts, so failure is loud, not silent.
+agent="$(printf '%s' "$input" | jq -r '.agent_type // .subagent_type // .agent_name // .agent.type // empty')"
+[[ "$agent" == "test-writer" ]] || exit 0
+
+# Resolve symlinks: real path of the nearest existing ancestor + the not-yet-existing rest.
+resolve() {
+  perl -MCwd=abs_path -e '
+    my $p = shift; my @rest;
+    while (!-e $p && $p =~ m{^(.*)/([^/]+)$}) { unshift @rest, $2; $p = $1 eq "" ? "/" : $1 }
+    my $r = abs_path($p) // $p; $r =~ s{/$}{};
+    print join("/", $r, @rest);
+  ' "$1"
+}
+
+root="$(resolve "${CLAUDE_PROJECT_DIR:-$(pwd)}")"
 
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty')"
 
@@ -22,13 +38,15 @@ block() {
   exit 2
 }
 
-# Normalise to a repo-relative path; reject traversal and paths outside the repo.
+# Normalise to a repo-relative path with symlinks resolved, so a link inside
+# api/tests/ that points into api/src/ is judged by where it really points.
+# Rejects traversal and anything that resolves outside the repo.
 rel_of() {
   local p="$1"
   [[ -z "$p" ]] && { printf '%s' "."; return; }
   [[ "$p" == *".."* ]] && block "path traversal ('..') is not allowed: $p"
   [[ "$p" != /* ]] && p="$root/$p"
-  p="${p%/}"
+  p="$(resolve "${p%/}")"
   if [[ "$p" == "$root" ]]; then printf '%s' "."; return; fi
   [[ "$p" == "$root"/* ]] || block "path outside the repo: $p"
   printf '%s' "${p#"$root"/}"

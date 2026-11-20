@@ -46,6 +46,7 @@ Assemble a packet both agents receive verbatim. Include whatever the navigator p
 
 ### 3. RED: delegate to test-writer
 Launch the `test-writer` agent with the packet. Tell it which slice it is and that it must not read `api/src/`. When it returns, relay its report: files, test names, the module/export contract, and assumptions.
+- If the report starts with **`GUARD INACTIVE`**, the source-blindness hook isn't enforcing (e.g. Claude Code changed its hook input). **Stop the run.** Tell the navigator, point them to `.claude/hooks/test-writer-guard.sh`, and don't continue to RED or GREEN.
 
 ### 4. Run tests and pause for the RED check
 Run `make test` yourself and show the relevant failure output: which tests fail and the first error for each.
