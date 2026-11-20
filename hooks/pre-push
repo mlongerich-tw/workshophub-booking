@@ -16,6 +16,9 @@ pnpm run lint
 echo "▶ Format check"
 pnpm run format-check
 
+echo "▶ OpenCode parity"
+node scripts/sync-opencode.mjs --check
+
 echo "▶ Trivy security scan"
 if command -v trivy &>/dev/null; then
   trivy fs . --severity HIGH,CRITICAL --exit-code 1 --quiet

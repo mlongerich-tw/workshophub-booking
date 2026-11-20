@@ -62,6 +62,16 @@ The baseline already contains some of these (`/search`, `routes/admin.ts`, the g
 - Every status code in a story's acceptance criteria gets a test, including errors (400/404/409/422).
 - Capacity logic gets a concurrency test (parallel requests against the last seat).
 
+## Claude Code / OpenCode parity
+
+The project works the same in Claude Code and OpenCode. **The Claude setup is the single source of truth.** Edit only these:
+- `CLAUDE.md`: OpenCode reads it natively. There is deliberately no `AGENTS.md`, because one would override this file. `@imports` become `opencode.json` `instructions`.
+- `.claude/skills/*/SKILL.md`: OpenCode reads them natively as skills. Each one also gets a generated `/command`.
+- `.claude/agents/*.md` and `.claude/hooks/<agent>-allowlist.txt`: these generate `.opencode/agents/*.md`, with tools and paths mapped to OpenCode permissions.
+- `.claude/settings.json` hooks: run unchanged in OpenCode by `.opencode/plugins/claude-hooks-bridge.ts`.
+
+Never hand-edit `.opencode/agents/`, `.opencode/commands/` or `opencode.json` `instructions`, because they are generated. Editing a source auto-regenerates them (PostToolUse hook). Otherwise run `make sync-opencode`. `make check-opencode`, the pre-push hook and CI fail on drift.
+
 ## MCP tools (authorized autonomous use)
 
 - `jira`: read issues, comments and search in project LATC.
