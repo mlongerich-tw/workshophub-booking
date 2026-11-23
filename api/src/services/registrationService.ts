@@ -43,7 +43,27 @@ export function validateRegistrationInput(body: unknown): ValidationResult {
   return { ok: true, value: { name, email } }
 }
 
+// Registration transactions run one at a time per process. With SQLite, concurrent
+// interactive transactions block Prisma's engine threads in the busy-wait, which can
+// starve the lock holder on low-CPU machines until every request times out. The
+// conditional increment below remains the capacity guarantee; this only avoids the
+// starvation.
+let queue: Promise<unknown> = Promise.resolve()
+
+function serialize<T>(task: () => Promise<T>): Promise<T> {
+  const run = queue.then(task, task)
+  queue = run.catch(() => undefined)
+  return run
+}
+
 export async function registerForSession(
+  sessionId: number,
+  input: RegistrationInput
+): Promise<RegisterResult> {
+  return serialize(() => claimSeatAndRegister(sessionId, input))
+}
+
+async function claimSeatAndRegister(
   sessionId: number,
   input: RegistrationInput
 ): Promise<RegisterResult> {

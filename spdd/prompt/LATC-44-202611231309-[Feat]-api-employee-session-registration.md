@@ -109,6 +109,7 @@ Notes:
      2. If `count === 0`, read the session inside the transaction: `null` means `not_found`, otherwise `full`. Nothing was written, so the transaction commits as a no-op.
      3. Otherwise create the `Registration` and read back the session's `id/capacity/registered`, all in the same transaction.
    - The column-to-column comparison uses Prisma field references (`prisma.trainingSession.fields.capacity`, GA in Prisma 5). No raw SQL.
+   - **In-process serialisation of registration transactions.** Each statement in an interactive transaction is a separate round trip into Prisma's query engine. While one transaction holds the SQLite write lock, concurrent transactions block engine worker threads in SQLite's busy-wait. With few worker threads (one per CPU; a 2-CPU CI runner has 2), the lock holder can't get a thread for its next statement, and every request times out after 5 s with a 500. So the service runs registration transactions through a module-level promise queue: one at a time per process. The conditional increment remains the correctness guarantee (it also protects across processes). The queue only removes engine-thread starvation. Throughput cost is negligible for an internal, single-instance SQLite app.
    - Error handling strategy: there is **no global exception handler change** (the existing one is a deliberate stack-leak exercise). The service returns a discriminated-union result instead of throwing for business outcomes. The route maps outcomes to statuses and wraps everything in `try/catch`, returning a generic 500 `{ error: 'Failed to create registration' }`, so new code never reaches the leaking global handler.
 
 3. **Business logic**:
@@ -125,7 +126,7 @@ Notes:
    - On 400/404, show the server's `error` message. On a network failure, show a generic message.
 
 5. **Risks and responses**:
-   - SQLite lock contention under parallel tests: mitigated by the write-first transaction and kept short. The mandated concurrency test proves it.
+   - SQLite lock contention under parallel requests: mitigated by the write-first transaction **and** by serialising registration transactions in-process (see above). The mandated concurrency test proves it, and Jest pins the engine to one worker thread so that CI's low-CPU conditions are reproduced on every machine.
    - Seed breakage from the new foreign key: `onDelete: Cascade`, and the seed also deletes registrations explicitly before sessions.
    - Shared dev database in integration tests: each test creates its own sessions and deletes them in `afterEach`/`afterAll`. Tests never rely on seed rows or test order.
 
@@ -139,11 +140,12 @@ Notes:
 ### Dependencies
 1. `app.ts` mounts the `registrationsRouter` at `/api/training-sessions/:id/registrations`.
 2. `routes/registrations.ts` calls `validateRegistrationInput` and `registerForSession` from `services/registrationService.ts`. It does **not** import Prisma.
-3. `services/registrationService.ts` depends on the shared `lib/prisma.ts` client (`$transaction`, `trainingSession.updateMany/findUnique`, `trainingSession.fields.capacity`, `registration.create`).
+3. `services/registrationService.ts` depends on the shared `lib/prisma.ts` client (`$transaction`, `trainingSession.updateMany/findUnique`, `trainingSession.fields.capacity`, `registration.create`). It runs every registration transaction through a module-local serial queue.
 4. `prisma/seed.ts` calls `registration.deleteMany` before `trainingSession.deleteMany`.
 5. `TrainingSessionsPage` holds the `sessions` state and passes `onAvailabilityChange` to each `TrainingSessionCard`.
 6. `TrainingSessionCard` renders `RegistrationForm` directly after the meta block and forwards `onAvailabilityChange`. `RegistrationForm` owns the `session-card__actions` wrapper.
 7. `RegistrationForm` calls `fetch(POST …/registrations)` and uses the `RegistrationResponse`, `ErrorResponse` and `SessionAvailability` types from `app/src/types`.
+8. `api/jest.config.js` sets `TOKIO_WORKER_THREADS` to `1` before Jest spawns its workers, so every test run uses a single Prisma engine worker thread (the CI-like worst case).
 
 ### Layered Architecture
 1. **Route layer** (`api/src/routes/registrations.ts`): HTTP only. Parses `:id`, delegates body validation, calls the service, maps `RegisterResult` to a status and JSON, and catches unexpected errors into a generic 500.
@@ -195,6 +197,8 @@ Execute in order. Tests are written before or alongside each implementation step
    - **full**: `updateMany` → `{ count: 0 }`, `findUnique` → a session. Expect `{ kind: 'full' }`; `create` not called.
    - **not_found**: `updateMany` → `{ count: 0 }`, `findUnique` → `null`. Expect `{ kind: 'not_found' }`; `create` not called.
    - Unexpected error from `create` propagates (rejects).
+   - **Serialisation**: start two `registerForSession` calls without awaiting. The first call's `updateMany` is held on a manually resolved promise. Assert `$transaction` has been called once, and only once, until the first call's `updateMany` is released. After release, both calls resolve and `$transaction` has been called twice.
+   - **Queue survives failure**: the first call rejects (`create` throws). The second call still runs and resolves `created`.
 4. Completion: tests fail before the service exists, then pass once it's implemented.
 
 ### Implement Service - `api/src/services/registrationService.ts`
@@ -206,12 +210,13 @@ Execute in order. Tests are written before or alongside each implementation step
 2. Module internals (not exported):
    - `const REQUIRED_FIELDS_ERROR = 'name and email are required'`
    - `nonBlankString(value: unknown): string | null` returns the trimmed string, or `null` if the value isn't a string or is blank after trimming.
+   - A module-level promise `queue` (initially resolved) and `serialize<T>(task: () => Promise<T>): Promise<T>`. It chains `task` after the current tail of `queue`, runs it whether the previous task resolved or rejected, then sets the tail to the new run with its rejection swallowed (so one failure never blocks later tasks). It returns the run, so the caller still sees its own result or error.
 3. `validateRegistrationInput(body: unknown): ValidationResult`
    - If `body` is not a non-null, non-array object → `{ ok: false, error: 'name and email are required' }`.
    - Read `name` and `email` from the body (cast to `Record<string, unknown>`) and pass each through `nonBlankString`. If either is `null`, return the same error.
    - Return `{ ok: true, value: { name, email } }` (already trimmed).
 4. `registerForSession(sessionId: number, input: RegistrationInput): Promise<RegisterResult>`
-   - Transaction management: the whole body runs in `prisma.$transaction(async (tx) => { ... })`.
+   - Transaction management: the whole body runs in `prisma.$transaction(async (tx) => { ... })`, and that transaction call is wrapped in `serialize(...)`, so no two registration transactions are in flight at once in this process.
    - Step 1, claim a seat: `const claimed = await tx.trainingSession.updateMany({ where: { id: sessionId, registered: { lt: prisma.trainingSession.fields.capacity } }, data: { registered: { increment: 1 } } })`.
    - Step 2, if `claimed.count === 0`: `const existing = await tx.trainingSession.findUnique({ where: { id: sessionId }, select: { id: true } })`. Return `existing ? { kind: 'full' } : { kind: 'not_found' }`.
    - Step 3: `const registration = await tx.registration.create({ data: { sessionId, name: input.name, email: input.email } })`.
@@ -233,6 +238,11 @@ Execute in order. Tests are written before or alongside each implementation step
    - **409 capacity 0**: capacity 0, registered 0 → 409.
    - **Concurrency (last seat)**: capacity 1, registered 0. Fire 5 POSTs in parallel with `Promise.all`. Expect exactly one 201 and four 409. The final `registered === 1`, and the DB registration count for the session is 1. No 500s.
 3. Completion: every case fails before the route exists, then passes once it's implemented.
+
+### Update Jest Config - `api/jest.config.js`
+1. Responsibility: make the concurrency test reproduce CI's low-CPU conditions on every machine.
+2. Logic: as the first statement, set `process.env.TOKIO_WORKER_THREADS` to `'1'`. Jest workers inherit it, so Prisma's query engine runs with one worker thread. Setting it in `tests/setup.ts` is too late, because the engine has already read the environment by then. Add a one-line comment saying why.
+3. Completion: without the service's serial queue, the concurrency test fails locally with `Operations timed out`. With it, the test passes.
 
 ### Create Route - `api/src/routes/registrations.ts`
 1. Responsibility: HTTP translation only.
@@ -323,7 +333,7 @@ Execute in order. Tests are written before or alongside each implementation step
    - `POST /api/training-sessions/:id/registrations` returns exactly: 201 on success, 400 for a non-numeric ID or missing/blank/non-string `name` or `email`, 404 for an unknown session, 409 when `registered >= capacity`.
    - Every 201 increases `registered` by exactly 1 and creates exactly 1 registration row. Every non-201 changes neither.
    - The UI shows a register control on every card. It is disabled ("Session full") when `registered >= capacity`, and shows a confirmation with the registration ID on success.
-2. **Performance constraints**: the registration transaction performs at most 4 statements (update, read or create, read). No N+1 queries and no full-table reads. Five parallel requests against one seat complete without any 500 or timeout under the default Prisma transaction settings.
+2. **Performance constraints**: the registration transaction performs at most 4 statements (update, read or create, read). No N+1 queries and no full-table reads. Five parallel requests against one seat complete without any 500 or timeout under the default Prisma transaction settings, **even with a single engine worker thread** (`TOKIO_WORKER_THREADS=1`). Registration transactions run one at a time per process; do not raise Prisma timeouts to mask contention.
 3. **Security constraints**: no `$queryRawUnsafe` and no string-built SQL (field references only). No stack traces or internal error text in responses. Do not modify or copy the deliberate exercises (`/search`, `routes/admin.ts`, the global error handler). Do not log personal data (name/email). Do not read or write `.env`.
 4. **Integration constraints**: the existing `GET /api/training-sessions` and `GET /:id` responses are unchanged (no new fields are required by the app). `make smoke-test` still passes. `app` and `api` types stay in sync manually.
 5. **Business rule constraints**:
@@ -334,7 +344,7 @@ Execute in order. Tests are written before or alongside each implementation step
    - Business outcomes are typed results with fixed messages: `'Invalid session ID'`, `'name and email are required'`, `'Training session not found'`, `'Training session is full'`.
    - Unexpected failures return 500 `{ error: 'Failed to create registration' }` and are logged server-side only.
    - New code must handle its own errors and never rely on the global error handler.
-7. **Technical constraints**: no new dependencies (API or app). Node 24, TypeScript 5.9, Express 4, Prisma 5.22, React 18. Seat claim and registration insert happen in **one** `prisma.$transaction`. The schema change is applied only via `make reset-db` after user approval.
+7. **Technical constraints**: no new dependencies (API or app). Node 24, TypeScript 5.9, Express 4, Prisma 5.22, React 18. Seat claim and registration insert happen in **one** `prisma.$transaction`, executed through the service's in-process serial queue. The schema change is applied only via `make reset-db` after user approval.
 8. **Data constraints**: `name` and `email` are stored trimmed and non-empty. `sessionId` must reference an existing session (foreign key, `onDelete: Cascade`). `createdAt` is set by the database.
 9. **API constraints**: request `Content-Type: application/json` with body `{ name: string, email: string }` (extra fields ignored). The 201 body is `{ registration: { id, sessionId, name, email, createdAt }, session: { id, capacity, registered } }`. Error bodies are `{ error: string }`.
 10. **Process constraints (Definition of Done)**: tests are written first or alongside. `make test`, `make lint`, `make format-check` and `make build` all pass. Never use `--no-verify`. The seed runs after `make reset-db`. Work happens on a feature branch, never committing to `main`.

@@ -124,4 +124,42 @@ describe('registerForSession', () => {
 
     await expect(registerForSession(1, input)).rejects.toThrow('db down')
   })
+
+  it('runs registration transactions one at a time', async () => {
+    let releaseFirst: (value: { count: number }) => void = () => undefined
+    mockUpdateMany
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseFirst = resolve
+          })
+      )
+      .mockResolvedValueOnce({ count: 1 })
+    mockCreate.mockResolvedValue(createdRegistration)
+    mockFindUnique.mockResolvedValue({ id: 1, capacity: 20, registered: 6 })
+    mockTransaction.mockClear()
+
+    const first = registerForSession(1, input)
+    const second = registerForSession(1, input)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(mockTransaction).toHaveBeenCalledTimes(1)
+
+    releaseFirst({ count: 1 })
+    await expect(first).resolves.toMatchObject({ kind: 'created' })
+    await expect(second).resolves.toMatchObject({ kind: 'created' })
+    expect(mockTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps processing registrations after one fails', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 })
+    mockCreate.mockRejectedValueOnce(new Error('db down')).mockResolvedValue(createdRegistration)
+    mockFindUnique.mockResolvedValue({ id: 1, capacity: 20, registered: 6 })
+
+    const first = registerForSession(1, input)
+    const second = registerForSession(1, input)
+
+    await expect(first).rejects.toThrow('db down')
+    await expect(second).resolves.toMatchObject({ kind: 'created' })
+  })
 })
