@@ -12,15 +12,17 @@ description: "Start work on a WorkshopHub Jira story. Reads an LATC card, create
 
 Start work on one LATC story, then stop. Follow the steps in order.
 
+Jira is reached through the Atlassian CLI, `acli` (site `thoughtworks.atlassian.net`). Reads run freely. Every write (`create`, `link create`, `transition`, `comment create`) is stopped by the `cli-write-guard` hook for the user's OK, on top of the confirmation in step 6. That double check is intended.
+
 ## Hard rules
 
-- **NEVER edit, change, transition, comment on or otherwise write to the original card.** Every Jira write goes to the user's copy only. Before each write, check that the target key is not the original key. If it is, stop.
-- **The only exception** is the `Cloners` issue link created in step 7. It is created from the copy, but Jira also shows it on the original ("is cloned by LATC-<m>"). It is the only allowed effect on the original. Never pass the link's optional `comment` input, because that comment would be posted on the original.
-- `editJiraIssue` is only for the copy, never the original.
-- `executeWrite` is only for `createJiraIssueLink`. Use it for nothing else.
+- **NEVER edit, change, transition, comment on or otherwise write to the original card.** Every Jira write goes to the user's copy only. Before each write command, check that its `--key` (or `--out`) is not the original key. If it is, stop.
+- **The only exception** is the `Cloners` issue link created in step 7. It is created from the copy, but Jira also shows it on the original ("is cloned by LATC-<m>"). It is the only allowed effect on the original. `link create` has no comment option; never add a comment to the original by any other means.
+- Every write names exactly one work item with `--key LATC-<m>`. Never use `--jql`, `--filter` or a comma-separated key list on a write; the hook blocks them.
+- Use only these write commands: `acli jira workitem create`, `acli jira workitem link create`, `acli jira workitem transition`, `acli jira workitem comment create`. Nothing else writes to Jira.
+- Always pass `--json` to reads and parse the output; don't scrape the human-readable tables.
 - Use AskUserQuestion for anything unclear. Don't guess card numbers, names or statuses.
 - Never push, and never commit. This command ends with a checked-out branch.
-- Jira site: `thoughtworks.atlassian.net` (pass it as `cloudId`). If it is rejected, call `getAccessibleAtlassianResources` once and use the returned cloudId.
 
 ## Board columns vs statuses
 
@@ -36,7 +38,7 @@ Start work on one LATC story, then stop. Follow the steps in order.
 
 - A card is "in In Development" if its status is `In Progress` or `Blocked / On Hold`.
 - "Move to In Development" means transitioning to the status **`In Progress`**.
-- If the mapping looks wrong (for example, no `In Progress` transition exists), recheck it: `discover` "get jira board configuration", then `executeRead` `getJiraBoardConfig` with `boardId: 22687`. Ask if it is still unclear.
+- If the mapping looks wrong (for example, the transition to `In Progress` fails), ask the user. `acli` can't read the board's column configuration (`acli jira board view` returns only the board's name and type), so the table above is the only source. To see which statuses LATC cards actually use, run `acli jira workitem search --jql 'project = LATC' --fields 'key,status' --paginate --json` and collect `fields.status.name`.
 
 ## Steps
 
@@ -44,64 +46,83 @@ Start work on one LATC story, then stop. Follow the steps in order.
 Take the key from `$ARGUMENTS` (e.g. `LATC-2`, `latc-2` or `2`) and write it uppercase as `LATC-<n>`.
 - Missing or unparseable → ask with AskUserQuestion.
 
-### 2. Check the git working tree
-Run `git status --short`.
-- Uncommitted changes → ask whether to stop, or to carry the changes onto the new branch. Don't stash or discard anything without a yes.
+### 2. Preflight
+- Run `acli jira auth status`. Not logged in → tell the user to run `! acli jira auth login --web` (choose the `thoughtworks.atlassian.net` site), then stop. Don't run `auth login` yourself; it's interactive.
+- Run `git status --short`. Uncommitted changes → ask whether to stop, or to carry the changes onto the new branch. Don't stash or discard anything without a yes.
 
 ### 3. Read the original card
-Call `getJiraIssue` with `issueIdOrKey: LATC-<n>` and `view: "evidence"`. Note the summary, issue type, status, description, acceptance criteria, labels and issue links.
+```bash
+acli jira workitem view LATC-<n> --fields 'summary,issuetype,status,description,labels,issuelinks' --json
+```
+Note the summary, issue type, status, description (ADF JSON), labels and issue links. If the card has acceptance criteria in a separate custom field, rerun with `--fields '*all'` to find it.
 - Not found → tell the user and stop.
 - The card is itself a copy (summary starts with `[`, description starts with `Copied from LATC-`, or it has a "clones" link) → ask whether they meant the original it was copied from.
 
 ### 4. Identify the user
-`atlassianUserInfo` returns only an accountId, not a name. Instead, call `executeRead` with `name: "getJiraCurrentUser"` and `inputs: {}` (use `discover` "get current jira user" if the name is rejected), and take `displayName` as `<Name>`.
-- No display name → ask with AskUserQuestion.
+`acli` has no "who am I" command, but JQL's `currentUser()` resolves to the logged-in user. Find their display name from a card they reported:
+```bash
+acli jira workitem search --jql 'reporter = currentUser() ORDER BY created DESC' --fields 'key,reporter' --limit 1 --json
+```
+Take `fields.reporter.displayName` as `<Name>`.
+- No result → try `assignee = currentUser()` with `--fields 'key,assignee'` and take `fields.assignee.displayName`.
+- Still nothing → ask with AskUserQuestion.
 
 ### 5. Find an existing copy
-Search with `searchJiraIssuesUsingJql`, requesting fields `summary`, `status`, `issuelinks`:
+```bash
+acli jira workitem search --jql 'project = LATC AND (issue in linkedIssues(LATC-<n>) OR description ~ "\"Copied from LATC-<n>\"") ORDER BY created DESC' --fields 'key,summary,status' --paginate --json
 ```
-project = LATC AND (issue in linkedIssues(LATC-<n>) OR description ~ "\"Copied from LATC-<n>\"") ORDER BY created DESC
+Search can't return `issuelinks` ("field 'issuelinks' is not allowed"), so ask only for key, summary and status. Keep only results whose summary is exactly `[<Name>] <original summary>`. Exclude the original key. For each kept copy, read its links:
+```bash
+acli jira workitem view LATC-<m> --fields issuelinks --json
 ```
-Keep only results whose summary is exactly `[<Name>] <original summary>`. Exclude the original key. Note whether each kept copy already has a `Cloners` link to LATC-<n>.
+It already has the link if an entry has `type.name` `Cloners` and `outwardIssue.key` LATC-<n>.
 - More than one match → ask which copy to use.
 
-### 6. Confirm the Jira write
-CLAUDE.md says to ask before any MCP write, so confirm with AskUserQuestion before writing. List every write that will happen:
+### 6. Confirm the Jira writes
+CLAUDE.md says to ask before any Jira write, so confirm with AskUserQuestion before writing. List every write that will happen:
 - "create copy `[<Name>] <summary>`"
 - "link it as cloning LATC-<n> (the link also shows on LATC-<n>)", if the copy has no link yet
 - "move copy LATC-<m> to In Progress (In Development column)"
 - or "comment on copy LATC-<m>"
 
-Options: proceed or cancel.
+Options: proceed or cancel. The hook then asks again for each write command; that is expected.
 
 ### 7. Copy or comment
 **A. No copy exists:**
-1. `createJiraIssue` with `projectKey: "LATC"`, the original's `issueType`, `summary: "[<Name>] <original summary>"`, the original's labels, and this description:
+1. Write the description to a temp file as ADF: the original's description document with one paragraph inserted at the start of its `content` array:
+   ```json
+   { "type": "paragraph", "content": [{ "type": "text", "text": "Copied from LATC-<n> for kickoff" }] }
    ```
-   Copied from LATC-<n> for kickoff
+   If the original has no description, the document is just that paragraph (`{ "type": "doc", "version": 1, "content": [ ... ] }`). Then create the copy:
+   ```bash
+   acli jira workitem create --project LATC --type '<issue type>' \
+     --summary '[<Name>] <original summary>' \
+     --label '<label1>,<label2>' \
+     --description-file "$tmp" --json
+   ```
+   Omit `--label` if the original has none. Take the new key `LATC-<m>` from the JSON output.
+2. Link the copy to the original:
+   ```bash
+   acli jira workitem link create --out LATC-<m> --in LATC-<n> --type clones --yes
+   ```
+   `--type` takes the link type's outward description; for `Cloners` that is `clones`, so this reads "LATC-<m> clones LATC-<n>". Check it with `acli jira workitem link list --key LATC-<m> --json`: expect an entry with `typeName` `Cloners` and `outwardIssueKey` LATC-<n>. If the link fails, report the failure and continue; the copy is still usable.
+3. Move the **copy** to In Development:
+   ```bash
+   acli jira workitem transition --key LATC-<m> --status 'In Progress' --yes --json
+   ```
+   Then confirm with `acli jira workitem view LATC-<m> --fields status --json` that the status is `In Progress`. Transition fails (no path to that status) → ask.
 
-   <original description, unchanged>
-   ```
-2. Link the copy to the original with `executeWrite`:
-   ```
-   name: "createJiraIssueLink"
-   inputs: { linkType: "Cloners", inwardIssue: "LATC-<m>", outwardIssue: "LATC-<n>" }
-   ```
-   This reads "LATC-<m> clones LATC-<n>". Don't pass `comment`. If it fails, report the failure and continue; the copy is still usable.
-3. List transitions for the **copy**: `executeRead` `listJiraIssueTransitions` with the copy's key. Pick the transition whose `to.name` is `In Progress`. None available → ask.
-4. `transitionJiraIssue` on the **copy** with that `transitionId`. Confirm that the returned status is `In Progress`.
+**B. Copy exists and its status is not in the In Development column:** run A.2 (only if it has no `Cloners` link yet), then A.3 on the copy.
 
-**B. Copy exists and its status is not in the In Development column:** run A.2 (only if it has no `Cloners` link yet), then A.3–A.4 on the copy.
-
-**C. Copy exists and is already in the In Development column (`In Progress` or `Blocked / On Hold`):** don't transition anything. Run A.2 if the link is missing. Add a comment to the **copy** with `addOrEditJiraIssueComment`:
-```
-Kickoff re-run by <Name> on <YYYY-MM-DD>. Branch: latc-<m>-<desc>.
+**C. Copy exists and is already in the In Development column (`In Progress` or `Blocked / On Hold`):** don't transition anything. Run A.2 if the link is missing. Add a comment to the **copy**:
+```bash
+acli jira workitem comment create --key LATC-<m> --body 'Kickoff re-run by <Name> on <YYYY-MM-DD>. Branch: latc-<m>-<desc>.'
 ```
 
 From here on, `<m>` is the copy's number.
 
 ### 8. Save the story
-Write `./stories/LATC-<m>.md` (create `stories/` if missing). Overwrite only after asking.
+Write `./stories/LATC-<m>.md` (create `stories/` if missing). Overwrite only after asking. Render the ADF description as Markdown (headings, lists, code, links).
 ```markdown
 # LATC-<m>: [<Name>] <original summary>
 
