@@ -1,5 +1,17 @@
 import { Router, IRouter, Request, Response } from 'express'
-import { registerForSession, validateRegistrationInput } from '../services/registrationService'
+import {
+  registerForSession,
+  validateRegistrationInput,
+  type RegisterResult,
+  type RegistrationStatus,
+} from '../services/registrationService'
+
+type StoredRegistration = Extract<RegisterResult, { kind: 'confirmed' }>['registration']
+
+function toRegistrationDto(registration: StoredRegistration, status: RegistrationStatus) {
+  const { id, sessionId, name, email, createdAt } = registration
+  return { id, sessionId, name, email, status, createdAt }
+}
 
 const router: IRouter = Router({ mergeParams: true })
 
@@ -23,17 +35,21 @@ router.post('/', async (req: Request<{ id: string }>, res: Response) => {
       case 'not_found':
         res.status(404).json({ error: 'Training session not found' })
         return
-      case 'full':
-        res.status(409).json({ error: 'Training session is full' })
-        return
-      case 'created': {
-        const { id, name, email, createdAt } = result.registration
+      case 'confirmed':
         res.status(201).json({
-          registration: { id, sessionId: result.registration.sessionId, name, email, createdAt },
+          status: 'confirmed',
+          registration: toRegistrationDto(result.registration, 'confirmed'),
           session: result.session,
         })
         return
-      }
+      case 'waitlisted':
+        res.status(202).json({
+          status: 'waitlisted',
+          position: result.position,
+          registration: toRegistrationDto(result.registration, 'waitlisted'),
+          session: result.session,
+        })
+        return
       default: {
         const unreachable: never = result
         throw new Error(`Unhandled registration result: ${JSON.stringify(unreachable)}`)

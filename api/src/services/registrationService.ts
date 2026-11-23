@@ -6,18 +6,33 @@ export interface RegistrationInput {
   email: string
 }
 
+export type RegistrationStatus = 'confirmed' | 'waitlisted' | 'cancelled'
+
 export interface SessionAvailability {
   id: number
   capacity: number
   registered: number
+  waitlisted: number
 }
 
 export type ValidationResult = { ok: true; value: RegistrationInput } | { ok: false; error: string }
 
 export type RegisterResult =
-  | { kind: 'created'; registration: Registration; session: SessionAvailability }
+  | { kind: 'confirmed'; registration: Registration; session: SessionAvailability }
+  | {
+      kind: 'waitlisted'
+      registration: Registration
+      position: number
+      session: SessionAvailability
+    }
   | { kind: 'not_found' }
-  | { kind: 'full' }
+
+const AVAILABILITY_SELECT = {
+  id: true,
+  capacity: true,
+  registered: true,
+  waitlisted: true,
+} as const
 
 const REQUIRED_FIELDS_ERROR = 'name and email are required'
 
@@ -60,43 +75,65 @@ export async function registerForSession(
   sessionId: number,
   input: RegistrationInput
 ): Promise<RegisterResult> {
-  return serialize(() => claimSeatAndRegister(sessionId, input))
+  return serialize(() => claimSeatOrWaitlist(sessionId, input))
 }
 
-async function claimSeatAndRegister(
+async function claimSeatOrWaitlist(
   sessionId: number,
   input: RegistrationInput
 ): Promise<RegisterResult> {
   return prisma.$transaction(async (tx) => {
     // Write first: the conditional increment lets the database decide who gets the
     // last seat, and taking the write lock up front avoids SQLite read-then-upgrade
-    // deadlocks between concurrent registrations.
+    // deadlocks between concurrent registrations. The waitlist path below runs in
+    // the same serialised transaction, which is what keeps positions unique.
     const claimed = await tx.trainingSession.updateMany({
       where: { id: sessionId, registered: { lt: prisma.trainingSession.fields.capacity } },
       data: { registered: { increment: 1 } },
     })
 
-    if (claimed.count === 0) {
-      const existing = await tx.trainingSession.findUnique({
-        where: { id: sessionId },
-        select: { id: true },
+    if (claimed.count > 0) {
+      const registration = await tx.registration.create({
+        data: { sessionId, name: input.name, email: input.email, status: 'confirmed' },
       })
-      return existing ? { kind: 'full' } : { kind: 'not_found' }
+
+      const session = await tx.trainingSession.findUnique({
+        where: { id: sessionId },
+        select: AVAILABILITY_SELECT,
+      })
+
+      if (!session) {
+        throw new Error('Session disappeared during registration')
+      }
+
+      return { kind: 'confirmed', registration, session }
     }
+
+    const existing = await tx.trainingSession.findUnique({
+      where: { id: sessionId },
+      select: { id: true },
+    })
+    if (!existing) {
+      return { kind: 'not_found' }
+    }
+
+    const session = await tx.trainingSession.update({
+      where: { id: sessionId },
+      data: { waitlisted: { increment: 1 } },
+      select: AVAILABILITY_SELECT,
+    })
 
     const registration = await tx.registration.create({
-      data: { sessionId, name: input.name, email: input.email },
+      data: { sessionId, name: input.name, email: input.email, status: 'waitlisted' },
     })
 
-    const session = await tx.trainingSession.findUnique({
-      where: { id: sessionId },
-      select: { id: true, capacity: true, registered: true },
+    // Position is counted, not stored, so it stays correct once earlier entries
+    // leave the waitlist (cancellation or promotion). Autoincrement ids give a
+    // strict arrival order where timestamps could tie.
+    const position = await tx.registration.count({
+      where: { sessionId, status: 'waitlisted', id: { lte: registration.id } },
     })
 
-    if (!session) {
-      throw new Error('Session disappeared during registration')
-    }
-
-    return { kind: 'created', registration, session }
+    return { kind: 'waitlisted', registration, position, session }
   })
 }

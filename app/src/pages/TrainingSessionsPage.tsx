@@ -29,7 +29,14 @@ function TrainingSessionsPage() {
   function handleAvailabilityChange(update: SessionAvailability) {
     setSessions((prev) =>
       prev.map((s) =>
-        s.id === update.id ? { ...s, capacity: update.capacity, registered: update.registered } : s
+        s.id === update.id
+          ? {
+              ...s,
+              capacity: update.capacity,
+              registered: update.registered,
+              waitlisted: update.waitlisted,
+            }
+          : s
       )
     )
   }

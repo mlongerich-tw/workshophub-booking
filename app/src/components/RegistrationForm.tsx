@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type {
+  ConfirmedRegistrationResponse,
   ErrorResponse,
-  RegistrationResponse,
   SessionAvailability,
   TrainingSession,
+  WaitlistedRegistrationResponse,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
@@ -15,7 +16,7 @@ interface Props {
 }
 
 interface Message {
-  kind: 'success' | 'error'
+  kind: 'success' | 'waitlisted' | 'error'
   text: string
 }
 
@@ -23,15 +24,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function isRegistrationResponse(value: unknown): value is RegistrationResponse {
+function isSessionAvailability(value: unknown): value is SessionAvailability {
   return (
     isRecord(value) &&
+    typeof value.id === 'number' &&
+    typeof value.capacity === 'number' &&
+    typeof value.registered === 'number' &&
+    typeof value.waitlisted === 'number'
+  )
+}
+
+function hasRegistrationAndSession(value: Record<string, unknown>): boolean {
+  return (
     isRecord(value.registration) &&
     typeof value.registration.id === 'number' &&
-    isRecord(value.session) &&
-    typeof value.session.id === 'number' &&
-    typeof value.session.capacity === 'number' &&
-    typeof value.session.registered === 'number'
+    isSessionAvailability(value.session)
+  )
+}
+
+function isConfirmedResponse(value: unknown): value is ConfirmedRegistrationResponse {
+  return isRecord(value) && value.status === 'confirmed' && hasRegistrationAndSession(value)
+}
+
+function isWaitlistedResponse(value: unknown): value is WaitlistedRegistrationResponse {
+  return (
+    isRecord(value) &&
+    value.status === 'waitlisted' &&
+    typeof value.position === 'number' &&
+    hasRegistrationAndSession(value)
   )
 }
 
@@ -59,7 +79,7 @@ function RegistrationForm({ session, onAvailabilityChange }: Props) {
       })
       const data: unknown = await res.json()
 
-      if (res.status === 201 && isRegistrationResponse(data)) {
+      if (res.status === 201 && isConfirmedResponse(data)) {
         onAvailabilityChange(data.session)
         setMessage({
           kind: 'success',
@@ -68,13 +88,15 @@ function RegistrationForm({ session, onAvailabilityChange }: Props) {
         setName('')
         setEmail('')
         setOpen(false)
-      } else if (res.status === 409) {
-        onAvailabilityChange({
-          id: session.id,
-          capacity: session.capacity,
-          registered: session.capacity,
+      } else if (res.status === 202 && isWaitlistedResponse(data)) {
+        onAvailabilityChange(data.session)
+        setMessage({
+          kind: 'waitlisted',
+          text: `You're on the waitlist at position ${data.position}. Your place is not confirmed yet. Your registration ID is #${data.registration.id}.`,
         })
-        setMessage({ kind: 'error', text: 'Sorry, this session is now full.' })
+        setName('')
+        setEmail('')
+        setOpen(false)
       } else {
         setMessage({
           kind: 'error',
@@ -97,17 +119,6 @@ function RegistrationForm({ session, onAvailabilityChange }: Props) {
     </p>
   )
 
-  if (isFull) {
-    return (
-      <div className="session-card__actions">
-        <button type="button" className="register-button" disabled>
-          Session full
-        </button>
-        {messageElement}
-      </div>
-    )
-  }
-
   if (!open) {
     return (
       <div className="session-card__actions">
@@ -119,7 +130,7 @@ function RegistrationForm({ session, onAvailabilityChange }: Props) {
             setMessage(null)
           }}
         >
-          Register
+          {isFull ? 'Join Waitlist' : 'Register'}
         </button>
         {messageElement}
       </div>
@@ -153,7 +164,13 @@ function RegistrationForm({ session, onAvailabilityChange }: Props) {
         </label>
         <div className="registration-form__actions">
           <button type="submit" className="register-button" disabled={submitting}>
-            {submitting ? 'Registering…' : 'Confirm registration'}
+            {isFull
+              ? submitting
+                ? 'Joining…'
+                : 'Join waitlist'
+              : submitting
+                ? 'Registering…'
+                : 'Confirm registration'}
           </button>
           <button
             type="button"
