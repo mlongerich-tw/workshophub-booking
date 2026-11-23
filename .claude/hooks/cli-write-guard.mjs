@@ -158,14 +158,44 @@ export function classify({ cli, args }, allowlist) {
   if (cli === 'gh' && isReadOnlyGhApi(args)) return { decision: 'allow', reason: 'GET gh api' }
   if (cli === 'acli') {
     const bulk = bulkJiraWrite(args)
-    if (bulk) return { decision: 'deny', reason: `bulk Jira write (${bulk})` }
+    if (bulk) {
+      return {
+        decision: 'deny',
+        reason:
+          `bulk Jira write (${bulk}); Jira writes must name exactly one work item with --key so ` +
+          "they can never touch the original LATC card or other people's cards",
+      }
+    }
   }
   return { decision: 'ask', reason: `${line.split(' ').slice(0, 4).join(' ')} may write` }
 }
 
 /** @returns {{ decision: 'none' | 'ask' | 'deny', reasons: string[] }} for a whole command */
+const KEYCHAIN_READS = new Set([
+  'find-generic-password',
+  'find-internet-password',
+  'dump-keychain',
+  'export',
+])
+
+/** `security find-generic-password ...` and friends would put a stored token in the transcript. */
+export function keychainReads(cmd) {
+  const sep = SHELL_EXEC.test(cmd) ? /\|\||&&|\$\(|[;&|\n(){}`"']/ : /\|\||&&|\$\(|[;&|\n(){}`]/
+  return stripProse(cmd)
+    .split(sep)
+    .map((seg) => seg.trim().split(/\s+/))
+    .filter((toks) =>
+      toks.some((t, i) => base(t) === 'security' && KEYCHAIN_READS.has(toks[i + 1]))
+    )
+    .map(() => ({
+      decision: 'deny',
+      reason:
+        'reading the macOS Keychain would expose stored credentials (use node scripts/jira-get.mjs for Jira reads)',
+    }))
+}
+
 export function evaluate(cmd, allowlist = loadAllowlist()) {
-  const results = findCalls(cmd).map((c) => classify(c, allowlist))
+  const results = [...keychainReads(cmd), ...findCalls(cmd).map((c) => classify(c, allowlist))]
   const pick = (d) => results.filter((r) => r.decision === d).map((r) => r.reason)
   if (pick('deny').length) return { decision: 'deny', reasons: pick('deny') }
   if (pick('ask').length) return { decision: 'ask', reasons: pick('ask') }
@@ -179,15 +209,11 @@ function main() {
   } catch {
     return 0
   }
-  if (typeof cmd !== 'string' || !/(^|[^\w-])(acli|gh)([^\w-]|$)/.test(cmd)) return 0
+  if (typeof cmd !== 'string' || !/(^|[^\w-])(acli|gh|security)([^\w-]|$)/.test(cmd)) return 0
 
   const { decision, reasons } = evaluate(cmd)
   if (decision === 'deny') {
-    process.stderr.write(
-      `BLOCKED: ${reasons.join('; ')}. Jira writes must name exactly one work item with --key ` +
-        "so they can never touch the original LATC card or other people's cards. " +
-        'Run one command per key instead.\n'
-    )
+    process.stderr.write(`BLOCKED: ${reasons.join('; ')}.\n`)
     return 2
   }
   if (decision === 'ask') {

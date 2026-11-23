@@ -78,6 +78,7 @@ Never hand-edit `.opencode/agents/`, `.opencode/commands/` or `opencode.json` `i
 No MCP servers: Jira and GitHub are reached through their CLIs.
 - `acli` (Atlassian CLI, site `thoughtworks.atlassian.net`): read work items, comments, links and JQL searches in project LATC, plus Confluence pages. Log in once with `! acli jira auth login --web`; check with `acli jira auth status`.
 - `gh`: read repos, issues, PRs, runs and commits (`gh api` only as a GET).
+- `node scripts/jira-get.mjs /rest/...`: read-only Jira REST GET for what `acli` can't do (board column configuration, a card's transitions, `/rest/api/3/myself`, any other GET). It reads the API token from the macOS Keychain item `workshophub-jira` itself; never read the Keychain directly (the hook blocks `security find-generic-password` and friends) and never print, log or store the token.
 
 The read-only commands are listed in `.claude/hooks/cli-readonly-commands.txt`. Any other `acli` or `gh` command counts as a write: `.claude/hooks/cli-write-guard.mjs` asks the user first, and blocks bulk Jira writes (`--jql`, `--filter`, several keys) outright. Always pass `--json` to `acli` reads and parse the result.
 

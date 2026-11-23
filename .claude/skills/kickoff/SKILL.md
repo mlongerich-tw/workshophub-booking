@@ -36,7 +36,7 @@ Jira is reached through the Atlassian CLI, `acli` (site `thoughtworks.atlassian.
 
 - A card is "in In Development" if its status is `In Progress` or `Blocked / On Hold`.
 - "Move to In Development" means transitioning to the status **`In Progress`**.
-- If the mapping looks wrong (for example, the transition to `In Progress` fails), ask the user. `acli` can't read the board's column configuration (`acli jira board view` returns only the board's name and type), so the table above is the only source. To see which statuses LATC cards actually use, run `acli jira workitem search --jql 'project = LATC' --fields 'key,status' --paginate --json` and collect `fields.status.name`.
+- If the mapping looks wrong (for example, no transition to `In Progress` exists), recheck it. `acli` can't read board configuration, so use the read-only REST helper: `node scripts/jira-get.mjs /rest/agile/1.0/board/22687/configuration` and read `columnConfig.columns[].statuses[].id`; resolve status ids with `node scripts/jira-get.mjs /rest/api/3/status/<id>`. Ask if it is still unclear.
 
 ## Steps
 
@@ -45,6 +45,7 @@ Take the key from `$ARGUMENTS` (e.g. `LATC-2`, `latc-2` or `2`) and write it upp
 - Missing or unparseable → ask with AskUserQuestion.
 
 ### 2. Preflight
+- If `node scripts/jira-get.mjs` is needed later and reports no Keychain item, ask the user to store the token (the message shows the command). Never read the Keychain yourself.
 - Run `acli jira auth status`. Not logged in → tell the user to run `! acli jira auth login --web` (choose the `thoughtworks.atlassian.net` site), then stop. Don't run `auth login` yourself; it's interactive.
 - Run `git status --short`. Uncommitted changes → ask whether to stop, or to carry the changes onto the new branch. Don't stash or discard anything without a yes.
 
@@ -57,12 +58,12 @@ Note the summary, issue type, status, description (ADF JSON), labels and issue l
 - The card is itself a copy (summary starts with `[`, description starts with `Copied from LATC-`, or it has a "clones" link) → ask whether they meant the original it was copied from.
 
 ### 4. Identify the user
-`acli` has no "who am I" command, but JQL's `currentUser()` resolves to the logged-in user. Find their display name from a card they reported:
+`acli` has no "who am I" command, so use the REST helper:
 ```bash
-acli jira workitem search --jql 'reporter = currentUser() ORDER BY created DESC' --fields 'key,reporter' --limit 1 --json
+node scripts/jira-get.mjs /rest/api/3/myself
 ```
-Take `fields.reporter.displayName` as `<Name>`.
-- No result → try `assignee = currentUser()` with `--fields 'key,assignee'` and take `fields.assignee.displayName`.
+Take `displayName` as `<Name>`.
+- Helper unavailable (no Keychain item) → fall back to `acli jira workitem search --jql 'reporter = currentUser() ORDER BY created DESC' --fields 'key,reporter' --limit 1 --json` and take `fields.reporter.displayName`.
 - Still nothing → ask with AskUserQuestion.
 
 ### 5. Find an existing copy
@@ -104,11 +105,11 @@ Options: proceed or cancel. The hook then asks again for each write command; tha
    acli jira workitem link create --out LATC-<m> --in LATC-<n> --type clones --yes
    ```
    `--type` takes the link type's outward description; for `Cloners` that is `clones`, so this reads "LATC-<m> clones LATC-<n>". Check it with `acli jira workitem link list --key LATC-<m> --json`: expect an entry with `typeName` `Cloners` and `outwardIssueKey` LATC-<n>. If the link fails, report the failure and continue; the copy is still usable.
-3. Move the **copy** to In Development:
+3. Move the **copy** to In Development. First list the copy's transitions with `node scripts/jira-get.mjs /rest/api/3/issue/LATC-<m>/transitions` and check that one has `to.name` `In Progress`. None available → ask. Then:
    ```bash
    acli jira workitem transition --key LATC-<m> --status 'In Progress' --yes --json
    ```
-   Then confirm with `acli jira workitem view LATC-<m> --fields status --json` that the status is `In Progress`. Transition fails (no path to that status) → ask.
+   Then confirm with `acli jira workitem view LATC-<m> --fields status --json` that the status is `In Progress`. Transition fails → ask.
 
 **B. Copy exists and its status is not in the In Development column:** run A.2 (only if it has no `Cloners` link yet), then A.3 on the copy.
 

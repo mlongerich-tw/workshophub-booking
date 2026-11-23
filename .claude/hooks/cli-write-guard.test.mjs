@@ -11,6 +11,10 @@ const decide = (cmd) => evaluate(cmd, allowlist).decision
 
 const cases = {
   none: [
+    // Jira REST reads go through the helper; listing keychains is harmless
+    'node scripts/jira-get.mjs /rest/agile/1.0/board/22687/configuration',
+    'security list-keychains',
+    'git commit -m "explain security find-generic-password usage"',
     // not a CLI call at all
     'git status --short',
     'grep -rn acli .claude',
@@ -88,6 +92,13 @@ const cases = {
     'gh',
   ],
   deny: [
+    // Keychain reads would put a stored token in the transcript
+    'security find-generic-password -s workshophub-jira -w',
+    'security find-generic-password -s workshophub-jira',
+    '/usr/bin/security find-internet-password -s thoughtworks.atlassian.net -w',
+    'security dump-keychain',
+    'echo hi && security find-generic-password -ga workshophub-jira',
+    'bash -c "security find-generic-password -s workshophub-jira -w"',
     'acli jira workitem transition --jql "project = LATC" --status Done --yes',
     'acli jira workitem comment create --jql "project = LATC" --body x',
     'acli jira workitem edit --filter 10001 --summary x',
