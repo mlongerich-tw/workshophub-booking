@@ -19,6 +19,7 @@ model TrainingSession {
   date         DateTime
   capacity     Int
   registered   Int      @default(0)
+  waitlisted   Int      @default(0)
   location     String
   deliveryMode String
   status       String   @default("active")
@@ -35,9 +36,11 @@ model Registration {
   sessionId Int
   name      String
   email     String
+  status    String          @default("confirmed")
   createdAt DateTime        @default(now())
   session   TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
+  @@index([sessionId, status])
   @@map("registrations")
 }

@@ -71,6 +71,9 @@ function TrainingSessionCard({ session, onAvailabilityChange }: Props) {
                 ({spotsLeft} spot{spotsLeft !== 1 ? 's' : ''} left)
               </span>
             )}
+            {session.waitlisted > 0 && (
+              <span className="waitlist-count"> · {session.waitlisted} on waitlist</span>
+            )}
           </span>
         </div>
       </div>

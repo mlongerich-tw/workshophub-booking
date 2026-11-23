@@ -13,7 +13,9 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.session-card--full {
+/* Fade the details of a full card but keep the Join Waitlist action fully visible. */
+.session-card--full .session-card__description,
+.session-card--full .session-card__meta {
   opacity: 0.75;
 }
 
@@ -104,6 +106,10 @@
   font-weight: 500;
 }
 
+.waitlist-count {
+  color: var(--color-text-muted);
+}
+
 .session-card__actions {
   display: flex;
   flex-direction: column;
@@ -169,6 +175,12 @@
 
 .registration-message--error {
   color: var(--color-error);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.registration-message--waitlisted {
+  color: #b45309;
   font-size: 0.85rem;
   margin: 0;
 }
