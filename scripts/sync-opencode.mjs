@@ -8,6 +8,7 @@
 //                                          .opencode/commands/<name>.md so /<name> works
 //   .claude/agents/<name>.md           →   .opencode/agents/<name>.md (tools → permissions)
 //   .claude/hooks/<agent>-allowlist.txt→   native read/edit path permissions for that agent
+//   .claude/hooks/cli-readonly-commands.txt → opencode.json "permissions": acli/gh ask, reads allow
 //   .claude/settings.json hooks        →   run live by .opencode/plugins/claude-hooks-bridge.ts
 //
 // Usage:
@@ -144,6 +145,24 @@ function commandFile(skillDir) {
   return { path: join(ROOT, '.opencode', 'commands', `${name}.md`), content: lines.join('\n') }
 }
 
+// Jira/GitHub CLI writes ask first, like .claude/hooks/cli-write-guard.mjs does in Claude Code.
+// The bridge runs that hook in OpenCode too, but it can only block (exit 2), not ask, so the
+// "ask" half is a native shell rule. Rules are ordered and the last match wins.
+function cliPermissions() {
+  const file = join(ROOT, '.claude', 'hooks', 'cli-readonly-commands.txt')
+  if (!existsSync(file)) return []
+  const reads = read(file)
+    .split('\n')
+    .map((l) => l.replace(/#.*$/, '').trim().replace(/\s+/g, ' '))
+    .filter(Boolean)
+  const rule = (resource, effect) => ({ action: 'shell', resource, effect })
+  return [
+    rule('acli *', 'ask'),
+    rule('gh *', 'ask'),
+    ...reads.flatMap((p) => [rule(p, 'allow'), rule(`${p} *`, 'allow')]),
+  ]
+}
+
 function opencodeJson() {
   const path = join(ROOT, 'opencode.json')
   const current = existsSync(path) ? JSON.parse(read(path)) : { $schema: 'https://opencode.ai/config.json' }
@@ -151,7 +170,7 @@ function opencodeJson() {
     .split('\n')
     .map((l) => l.match(/^@(\S+)\s*$/)?.[1])
     .filter(Boolean)
-  const next = { ...current, instructions: imports }
+  const next = { ...current, instructions: imports, permissions: cliPermissions() }
   return { path, content: JSON.stringify(next, null, 2) + '\n' }
 }
 
@@ -192,7 +211,8 @@ function sync() {
   return { changed: changed.map((f) => rel(f.path)), removed: orphans.map(rel) }
 }
 
-const SOURCE_RE = /^(CLAUDE\.md|\.claude\/agents\/[^/]+\.md|\.claude\/skills\/[^/]+\/SKILL\.md|\.claude\/hooks\/[^/]+-allowlist\.txt)$/
+const SOURCE_RE =
+  /^(CLAUDE\.md|\.claude\/agents\/[^/]+\.md|\.claude\/skills\/[^/]+\/SKILL\.md|\.claude\/hooks\/[^/]+-allowlist\.txt|\.claude\/hooks\/cli-readonly-commands\.txt)$/
 const GENERATED_RE = /^(\.opencode\/(agents|commands)\/[^/]+\.md|opencode\.json)$/
 
 function hookMode() {
@@ -217,8 +237,9 @@ function hookMode() {
     if (changed.includes(file)) {
       console.error(
         `${file} is generated from the Claude setup and your edit was reverted. ` +
-          'Edit the source instead (CLAUDE.md, .claude/agents, .claude/skills, .claude/hooks/*-allowlist.txt), ' +
-          'or for opencode.json edit keys other than "instructions".'
+          'Edit the source instead (CLAUDE.md, .claude/agents, .claude/skills, .claude/hooks/*-allowlist.txt, ' +
+          '.claude/hooks/cli-readonly-commands.txt), or for opencode.json edit keys other than ' +
+          '"instructions" and "permissions".'
       )
       return 2
     }

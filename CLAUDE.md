@@ -5,7 +5,7 @@
 @README.md
 @api/prisma/schema.prisma
 
-Requirements: Jira project **LATC** (via the `jira` MCP server). LATC-1 to LATC-9 are the canonical stories; LATC-1 (list sessions) is already built. Read the story before starting work.
+Requirements: Jira project **LATC** (via the Atlassian CLI, `acli`). LATC-1 to LATC-9 are the canonical stories; LATC-1 (list sessions) is already built. Read the story before starting work.
 
 ## Project context
 
@@ -69,19 +69,22 @@ The project works the same in Claude Code and OpenCode. **The Claude setup is th
 - `.claude/skills/*/SKILL.md`: OpenCode reads them natively as skills. Each one also gets a generated `/command`.
 - `.claude/agents/*.md` and `.claude/hooks/<agent>-allowlist.txt`: these generate `.opencode/agents/*.md`, with tools and paths mapped to OpenCode permissions.
 - `.claude/settings.json` hooks: run unchanged in OpenCode by `.opencode/plugins/claude-hooks-bridge.ts`.
+- `.claude/hooks/cli-readonly-commands.txt`: also generates the `opencode.json` `permissions` rules (acli/gh writes ask, listed reads allowed), because the bridge can block but cannot ask.
 
-Never hand-edit `.opencode/agents/`, `.opencode/commands/` or `opencode.json` `instructions`, because they are generated. Editing a source auto-regenerates them (PostToolUse hook). Otherwise run `make sync-opencode`. `make check-opencode`, the pre-push hook and CI fail on drift.
+Never hand-edit `.opencode/agents/`, `.opencode/commands/` or `opencode.json` `instructions` and `permissions`, because they are generated. Editing a source auto-regenerates them (PostToolUse hook). Otherwise run `make sync-opencode`. `make check-opencode`, the pre-push hook and CI fail on drift.
 
-## MCP tools (authorized autonomous use)
+## Jira and GitHub CLIs (authorized autonomous use)
 
-- `jira`: read issues, comments and search in project LATC.
-- `github`: read repos, issues, PRs and commits.
+No MCP servers: Jira and GitHub are reached through their CLIs.
+- `acli` (Atlassian CLI, site `thoughtworks.atlassian.net`): read work items, comments, links and JQL searches in project LATC, plus Confluence pages. Log in once with `! acli jira auth login --web`; check with `acli jira auth status`.
+- `gh`: read repos, issues, PRs, runs and commits (`gh api` only as a GET).
+- `node scripts/jira-get.mjs /rest/...`: read-only Jira REST GET for what `acli` can't do (board column configuration, a card's transitions, `/rest/api/3/myself`, any other GET). It reads the API token from the macOS Keychain item `workshophub-jira` itself; never read the Keychain directly (the hook blocks `security find-generic-password` and friends) and never print, log or store the token.
 
-Anything that writes through an MCP server is listed under AGENT_BOUNDARY.
+The read-only commands are listed in `.claude/hooks/cli-readonly-commands.txt`. Any other `acli` or `gh` command counts as a write: `.claude/hooks/cli-write-guard.mjs` asks the user first, and blocks bulk Jira writes (`--jql`, `--filter`, several keys) outright. Always pass `--json` to `acli` reads and parse the result.
 
 ## AGENT_BOUNDARY (ask before doing)
 
-- Any MCP write: Jira comments, transitions or edits; GitHub issues, PRs, branches, pushes or merges.
+- Any Jira or GitHub write through `acli` or `gh`: Jira creates, comments, links, transitions or edits; GitHub issues, PRs, comments, releases, branches, pushes or merges.
 - `git push`, force-push, rebase of shared branches, or deleting branches.
 - Adding, removing or upgrading dependencies.
 - Prisma schema changes, `make reset-db`, or anything that deletes data.

@@ -1,0 +1,64 @@
+# Read-only acli / gh commands Claude (and OpenCode) may run without asking.
+#
+# Used by:
+#   .claude/hooks/cli-write-guard.sh   PreToolUse: any other acli/gh command asks first
+#   scripts/sync-opencode.mjs          opencode.json "permissions": shell allow rules
+#
+# One command prefix per line. A prefix matches the exact command or the command
+# followed by arguments ("acli jira workitem view" matches "acli jira workitem view LATC-2 --json").
+# Everything else that starts with acli or gh is a write (or unknown) and asks.
+# `gh api` is not listed: the hook allows it only as a plain GET; OpenCode always asks.
+
+# --- Jira (acli) ---
+acli --version
+acli jira auth status
+acli jira workitem view
+acli jira workitem search
+acli jira workitem link list
+acli jira workitem link type
+acli jira workitem comment list
+acli jira workitem comment visibility
+acli jira workitem attachment list
+acli jira board view
+acli jira board search
+acli jira board list-sprints
+acli jira board list-projects
+acli jira sprint view
+acli jira project view
+acli jira project list
+acli jira filter view
+acli jira filter list
+acli jira filter search
+acli jira filter list-columns
+acli jira dashboard search
+
+# --- Confluence (acli), read-only parity with the old Atlassian MCP ---
+acli confluence auth status
+acli confluence page view
+acli confluence space view
+acli confluence space list
+acli confluence blog view
+acli confluence blog list
+
+# --- GitHub (gh) ---
+gh --version
+gh auth status
+gh status
+gh pr view
+gh pr list
+gh pr diff
+gh pr checks
+gh pr status
+gh issue view
+gh issue list
+gh issue status
+gh repo view
+gh repo list
+gh run view
+gh run list
+gh workflow view
+gh workflow list
+gh release view
+gh release list
+gh label list
+gh search
