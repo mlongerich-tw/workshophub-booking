@@ -19,7 +19,7 @@ Jira is reached through the Atlassian CLI, `acli` (site `thoughtworks.atlassian.
 - **NEVER edit, change, transition, comment on or otherwise write to the original card.** Every Jira write goes to the user's copy only. Before each write command, check that its `--key` (or `--out`) is not the original key. If it is, stop.
 - **The only exception** is the `Cloners` issue link created in step 7. It is created from the copy, but Jira also shows it on the original ("is cloned by LATC-<m>"). It is the only allowed effect on the original. `link create` has no comment option; never add a comment to the original by any other means.
 - Every write names exactly one work item with `--key LATC-<m>`. Never use `--jql`, `--filter` or a comma-separated key list on a write; the hook blocks them.
-- Use only these write commands: `acli jira workitem create`, `acli jira workitem link create`, `acli jira workitem transition`, `acli jira workitem comment create`. Nothing else writes to Jira.
+- Use only these write commands: `acli jira workitem create`, `acli jira workitem link create`, `acli jira workitem transition`, `acli jira workitem comment create`. The only exception is `acli jira workitem link delete`, used to fix a reversed link in step 7 after asking. Nothing else writes to Jira.
 - Always pass `--json` to reads and parse the output; don't scrape the human-readable tables.
 - Use AskUserQuestion for anything unclear. Don't guess card numbers, names or statuses.
 - Never push, and never commit. This command ends with a checked-out branch.
@@ -104,9 +104,13 @@ Options: proceed or cancel. The hook then asks again for each write command; tha
    Omit `--label` if the original has none. Take the new key `LATC-<m>` from the JSON output.
 2. Link the copy to the original:
    ```bash
-   acli jira workitem link create --out LATC-<m> --in LATC-<n> --type clones --yes
+   acli jira workitem link create --out LATC-<n> --in LATC-<m> --type Cloners --yes
    ```
-   `--type` takes the link type's outward description; for `Cloners` that is `clones`, so this reads "LATC-<m> clones LATC-<n>". Check it with `acli jira workitem link list --key LATC-<m> --json`: expect an entry with `typeName` `Cloners` and `outwardIssueKey` LATC-<n>. If the link fails, report the failure and continue; the copy is still usable.
+   - `--type` takes the link type **name** (`Cloners`). The outward text `clones` fails with "No issue link type with name 'clones' found".
+   - acli's `--out`/`--in` are the reverse of what the names suggest: `--out` is the **original** and `--in` is the **copy**. This produces "LATC-<m> clones LATC-<n>". Swapping them gives the wrong direction ("LATC-<n> clones LATC-<m>").
+   - Verify with `acli jira workitem view LATC-<m> --fields issuelinks --json`: expect an entry with `type.name` `Cloners` and `outwardIssue.key` LATC-<n>. Don't rely on `link list`, because its `outwardIssueKey` is often `null`.
+   - The link is reversed (the copy's entry has `inwardIssue.key` LATC-<n>) → report it and ask before fixing. The fix is `acli jira workitem link delete --id <link id> --yes`, then rerun the create above. It's the only allowed use of `link delete`.
+   - The link fails → report the failure and continue; the copy is still usable.
 3. Move the **copy** to In Development. First list the copy's transitions with `node scripts/jira-get.mjs /rest/api/3/issue/LATC-<m>/transitions` and check that one has `to.name` `In Progress`. None available → ask. Then:
    ```bash
    acli jira workitem transition --key LATC-<m> --status 'In Progress' --yes --json
