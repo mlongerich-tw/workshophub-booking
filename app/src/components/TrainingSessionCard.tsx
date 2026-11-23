@@ -1,8 +1,10 @@
-import type { TrainingSession } from '../types'
+import type { SessionAvailability, TrainingSession } from '../types'
+import RegistrationForm from './RegistrationForm'
 import './TrainingSessionCard.css'
 
 interface Props {
   session: TrainingSession
+  onAvailabilityChange: (update: SessionAvailability) => void
 }
 
 function formatDate(dateStr: string): string {
@@ -30,7 +32,7 @@ function deliveryModeLabel(mode: string): string {
   return labels[mode] ?? mode
 }
 
-function TrainingSessionCard({ session }: Props) {
+function TrainingSessionCard({ session, onAvailabilityChange }: Props) {
   const spotsLeft = session.capacity - session.registered
   const isFull = spotsLeft <= 0
 
@@ -72,6 +74,8 @@ function TrainingSessionCard({ session }: Props) {
           </span>
         </div>
       </div>
+
+      <RegistrationForm session={session} onAvailabilityChange={onAvailabilityChange} />
     </article>
   )
 }

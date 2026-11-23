@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { TrainingSession } from '../types'
+import type { SessionAvailability, TrainingSession } from '../types'
 import TrainingSessionCard from '../components/TrainingSessionCard'
 import './TrainingSessionsPage.css'
 
@@ -26,6 +26,14 @@ function TrainingSessionsPage() {
       })
   }, [])
 
+  function handleAvailabilityChange(update: SessionAvailability) {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === update.id ? { ...s, capacity: update.capacity, registered: update.registered } : s
+      )
+    )
+  }
+
   if (loading) {
     return <div className="page-state">Loading training sessions...</div>
   }
@@ -51,7 +59,11 @@ function TrainingSessionsPage() {
       </p>
       <div className="sessions-grid">
         {sessions.map((session) => (
-          <TrainingSessionCard key={session.id} session={session} />
+          <TrainingSessionCard
+            key={session.id}
+            session={session}
+            onAvailabilityChange={handleAvailabilityChange}
+          />
         ))}
       </div>
     </section>

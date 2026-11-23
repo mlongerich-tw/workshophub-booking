@@ -5,6 +5,7 @@ import fs from 'fs'
 import healthRouter from './routes/health'
 import trainingSessionsRouter from './routes/training-sessions'
 import adminRouter from './routes/admin'
+import registrationsRouter from './routes/registrations'
 
 const app: Application = express()
 
@@ -12,6 +13,7 @@ app.use(cors())
 app.use(express.json())
 
 app.use('/health', healthRouter)
+app.use('/api/training-sessions/:id/registrations', registrationsRouter)
 app.use('/api/training-sessions', trainingSessionsRouter)
 app.use('/api/admin', adminRouter)
 

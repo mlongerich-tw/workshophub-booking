@@ -205,6 +205,7 @@ workshophub/
 | GET    | /health                    | Health check          |
 | GET    | /api/training-sessions     | List all sessions     |
 | GET    | /api/training-sessions/:id | Get one session by ID |
+| POST   | /api/training-sessions/:id/registrations | Register for a session |
 
 ## GitHub Actions Workflows
 
