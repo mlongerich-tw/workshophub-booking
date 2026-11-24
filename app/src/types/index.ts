@@ -46,6 +46,16 @@ export interface WaitlistedRegistrationResponse {
 
 export type RegistrationResponse = ConfirmedRegistrationResponse | WaitlistedRegistrationResponse
 
+export interface CancelRegistrationResponse {
+  status: 'cancelled'
+  session: SessionAvailability
+}
+
+export interface StoredSessionRegistration {
+  registrationId: number
+  status: RegistrationStatus
+}
+
 export interface ErrorResponse {
   error: string
 }

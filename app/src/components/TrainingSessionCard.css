@@ -116,6 +116,59 @@
   gap: 0.5rem;
 }
 
+.session-card__button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cancel-button {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--color-error);
+  border: 1px solid var(--color-error);
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cancel-button--confirm {
+  background: var(--color-error);
+  color: #ffffff;
+}
+
+.cancel-button:disabled {
+  background: var(--color-border);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.cancel-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+}
+
+.cancel-confirm__prompt {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.cancel-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .register-button {
   align-self: flex-start;
   background: var(--color-primary);

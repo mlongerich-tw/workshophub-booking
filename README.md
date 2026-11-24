@@ -208,6 +208,7 @@ workshophub/
 | GET    | /api/training-sessions     | List all sessions     |
 | GET    | /api/training-sessions/:id | Get one session by ID |
 | POST   | /api/training-sessions/:id/registrations | Register for a session (joins the waitlist when full) |
+| DELETE | /api/training-sessions/:id/registrations/:registrationId | Cancel a registration |
 
 ## GitHub Actions Workflows
 
