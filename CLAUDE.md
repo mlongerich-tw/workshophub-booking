@@ -69,6 +69,7 @@ The baseline already contains some of these (`/search`, `routes/admin.ts`, the g
 The project works the same in Claude Code and OpenCode. **The Claude setup is the single source of truth.** Edit only these:
 - `CLAUDE.md`: OpenCode reads it natively. There is deliberately no `AGENTS.md`, because one would override this file. `@imports` become `opencode.json` `instructions`.
 - `.claude/skills/*/SKILL.md`: OpenCode reads them natively as skills. Each one also gets a generated `/command`.
+- `.claude/commands/*.md`: generate `.opencode/commands/*.md` so Claude slash commands work as `/<name>` in OpenCode too.
 - `.claude/agents/*.md` and `.claude/hooks/<agent>-allowlist.txt`: these generate `.opencode/agents/*.md`, with tools and paths mapped to OpenCode permissions.
 - `.claude/settings.json` hooks: run unchanged in OpenCode by `.opencode/plugins/claude-hooks-bridge.ts`.
 - `.claude/hooks/cli-readonly-commands.txt`: also generates the `opencode.json` `permissions` rules (acli/gh writes ask, listed reads allowed), because the bridge can block but cannot ask.
