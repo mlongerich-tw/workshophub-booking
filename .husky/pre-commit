@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Pre-commit sensors: branch naming and the REASONS-Canvas structure.
+# Fix the cause; never bypass with --no-verify.
+make branch-check
+make reasons-lint

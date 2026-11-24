@@ -194,6 +194,8 @@ workshophub/
 | `make reset-db`     | Force-reset and re-seed database                  |
 | `make smoke-test`   | Validate a running application (default: port 3001) |
 | `make security`     | Run local security checks                         |
+| `make branch-check` | Check the branch is `latc-<n>-<slug>` (or `latc-xx-<slug>`) |
+| `make reasons-lint` | Check SPDD canvases have all REASONS sections     |
 | `make prod-up`      | Build and start production Docker container       |
 | `make prod-down`    | Stop production container (volume preserved)      |
 | `make prod-logs`    | Show production container logs                    |

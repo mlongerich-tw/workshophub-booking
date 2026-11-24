@@ -28,7 +28,9 @@ Key directories:
 ## Team norms
 
 ### Build / test
-Always use the Makefile, never ad-hoc scripts: `make setup`, `make dev` (API on :3001), `make test`, `make test-unit`, `make lint`, `make format-check`, `make build`, `make reset-db`.
+Always use the Makefile, never ad-hoc scripts: `make setup`, `make dev` (API on :3001), `make test`, `make test-unit`, `make lint`, `make format-check`, `make build`, `make reset-db`, `make branch-check`, `make reasons-lint`.
+
+The pre-commit hook runs `branch-check` and `reasons-lint`. `/sensor-and-fix` runs every sensor and fixes failures; `/finish-dev` runs it, commits and moves the card to In Review.
 
 ### Coding standards
 - **No `any`.** Use precise types, `unknown` with narrowing, or generics. Types are the contract between `api/` and `app/`, so `any` hides breakage there.

@@ -2,7 +2,7 @@ SHELL := /bin/bash
 ROOT_DIR := $(shell pwd)
 API_DIR := $(ROOT_DIR)/api
 
-.PHONY: setup dev test test-unit lint format-check build seed reset-db smoke-test security prod-up prod-down prod-logs sync-opencode check-opencode
+.PHONY: setup dev test test-unit lint format-check build seed reset-db smoke-test security prod-up prod-down prod-logs sync-opencode check-opencode branch-check reasons-lint
 
 ## setup: Install dependencies, generate Prisma client, push schema, seed database
 setup:
@@ -37,6 +37,14 @@ format-check:
 ## build: Build frontend and backend
 build:
 	pnpm run build
+
+## branch-check: Fail unless the branch is latc-<n>-<slug> (or latc-xx-<slug> for tooling work)
+branch-check:
+	@bash scripts/branch-name-check.sh
+
+## reasons-lint: Fail unless SPDD canvases have all REASONS sections, and story source changes have a canvas
+reasons-lint:
+	@bash scripts/reasons-lint.sh
 
 ## sync-opencode: Regenerate the OpenCode config from the Claude setup (Claude is the source of truth)
 sync-opencode:
