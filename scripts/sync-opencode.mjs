@@ -6,6 +6,7 @@
 //                                          its @imports become opencode.json "instructions"
 //   .claude/skills/<name>/SKILL.md     →   read natively by OpenCode as skills, plus
 //                                          .opencode/commands/<name>.md so /<name> works
+//   .claude/commands/<name>.md         →   .opencode/commands/<name>.md so /<name> works
 //   .claude/agents/<name>.md           →   .opencode/agents/<name>.md (tools → permissions)
 //   .claude/hooks/<agent>-allowlist.txt→   native read/edit path permissions for that agent
 //   .claude/hooks/cli-readonly-commands.txt → opencode.json "permissions": acli/gh ask, reads allow
@@ -127,9 +128,7 @@ function agentFile(srcPath) {
   return { path: join(ROOT, '.opencode', 'agents', `${name}.md`), content: lines.join('\n') }
 }
 
-function commandFile(skillDir) {
-  const name = skillDir.split('/').pop()
-  const src = join(skillDir, 'SKILL.md')
+function buildCommandFile(name, src) {
   const { data, body } = parseFrontmatter(read(src))
   const lines = [
     '---',
@@ -143,6 +142,15 @@ function commandFile(skillDir) {
     '',
   ]
   return { path: join(ROOT, '.opencode', 'commands', `${name}.md`), content: lines.join('\n') }
+}
+
+function skillCommandFile(skillDir) {
+  return buildCommandFile(skillDir.split('/').pop(), join(skillDir, 'SKILL.md'))
+}
+
+function claudeCommandFile(srcPath) {
+  const name = srcPath.split('/').pop().replace(/\.md$/, '')
+  return buildCommandFile(name, srcPath)
 }
 
 // Jira/GitHub CLI writes ask first, like .claude/hooks/cli-write-guard.mjs does in Claude Code.
@@ -181,11 +189,17 @@ function listDir(dir, filter) {
 }
 
 function plan() {
+  const skillCommands = listDir('.claude/skills', (d) => d.isDirectory())
+    .filter((d) => existsSync(join(d, 'SKILL.md')))
+    .map(skillCommandFile)
+  const skillPaths = new Set(skillCommands.map((f) => f.path))
+  const claudeCommands = listDir('.claude/commands', (d) => d.isFile() && d.name.endsWith('.md'))
+    .map(claudeCommandFile)
+    .filter((f) => !skillPaths.has(f.path))
   const files = [
     ...listDir('.claude/agents', (d) => d.isFile() && d.name.endsWith('.md')).map(agentFile),
-    ...listDir('.claude/skills', (d) => d.isDirectory())
-      .filter((d) => existsSync(join(d, 'SKILL.md')))
-      .map(commandFile),
+    ...skillCommands,
+    ...claudeCommands,
     opencodeJson(),
   ]
   const wanted = new Set(files.map((f) => f.path))
@@ -212,7 +226,7 @@ function sync() {
 }
 
 const SOURCE_RE =
-  /^(CLAUDE\.md|\.claude\/agents\/[^/]+\.md|\.claude\/skills\/[^/]+\/SKILL\.md|\.claude\/hooks\/[^/]+-allowlist\.txt|\.claude\/hooks\/cli-readonly-commands\.txt)$/
+  /^(CLAUDE\.md|\.claude\/agents\/[^/]+\.md|\.claude\/commands\/[^/]+\.md|\.claude\/skills\/[^/]+\/SKILL\.md|\.claude\/hooks\/[^/]+-allowlist\.txt|\.claude\/hooks\/cli-readonly-commands\.txt)$/
 const GENERATED_RE = /^(\.opencode\/(agents|commands)\/[^/]+\.md|opencode\.json)$/
 
 function hookMode() {
@@ -237,7 +251,7 @@ function hookMode() {
     if (changed.includes(file)) {
       console.error(
         `${file} is generated from the Claude setup and your edit was reverted. ` +
-          'Edit the source instead (CLAUDE.md, .claude/agents, .claude/skills, .claude/hooks/*-allowlist.txt, ' +
+          'Edit the source instead (CLAUDE.md, .claude/agents, .claude/commands, .claude/skills, .claude/hooks/*-allowlist.txt, ' +
           '.claude/hooks/cli-readonly-commands.txt), or for opencode.json edit keys other than ' +
           '"instructions" and "permissions".'
       )
