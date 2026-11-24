@@ -1,4 +1,4 @@
-import type { Registration } from '@prisma/client'
+import type { Prisma, Registration } from '@prisma/client'
 import prisma from '../lib/prisma'
 
 export interface RegistrationInput {
@@ -26,6 +26,25 @@ export type RegisterResult =
       session: SessionAvailability
     }
   | { kind: 'not_found' }
+
+export type CancelResult =
+  | { kind: 'cancelled'; session: SessionAvailability }
+  | { kind: 'not_found' }
+  | { kind: 'already_cancelled' }
+
+export interface WaitlistPromotionContext {
+  tx: Prisma.TransactionClient
+  sessionId: number
+  cancelledRegistrationId: number
+}
+
+export type WaitlistPromotionHook = (context: WaitlistPromotionContext) => Promise<void> | void
+
+export interface CancelRegistrationOptions {
+  onConfirmedCancelled?: WaitlistPromotionHook
+}
+
+const noopWaitlistPromotion: WaitlistPromotionHook = () => undefined
 
 const AVAILABILITY_SELECT = {
   id: true,
@@ -135,5 +154,66 @@ async function claimSeatOrWaitlist(
     })
 
     return { kind: 'waitlisted', registration, position, session }
+  })
+}
+
+export async function cancelRegistration(
+  sessionId: number,
+  registrationId: number,
+  options?: CancelRegistrationOptions
+): Promise<CancelResult> {
+  const onConfirmedCancelled = options?.onConfirmedCancelled ?? noopWaitlistPromotion
+  return serialize(() => cancelRegistrationTx(sessionId, registrationId, onConfirmedCancelled))
+}
+
+async function cancelRegistrationTx(
+  sessionId: number,
+  registrationId: number,
+  onConfirmedCancelled: WaitlistPromotionHook
+): Promise<CancelResult> {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.registration.findFirst({
+      where: { id: registrationId, sessionId },
+    })
+
+    if (!existing) {
+      return { kind: 'not_found' }
+    }
+
+    if (existing.status === 'cancelled') {
+      return { kind: 'already_cancelled' }
+    }
+
+    await tx.registration.update({
+      where: { id: existing.id },
+      data: { status: 'cancelled' },
+    })
+
+    if (existing.status === 'confirmed') {
+      await tx.trainingSession.updateMany({
+        where: { id: sessionId, registered: { gt: 0 } },
+        data: { registered: { decrement: 1 } },
+      })
+
+      // Run inside the transaction before reading final session availability so WH-5
+      // waitlist promotion executes atomically and returned counts reflect promotion.
+      await onConfirmedCancelled({ tx, sessionId, cancelledRegistrationId: existing.id })
+    } else if (existing.status === 'waitlisted') {
+      await tx.trainingSession.updateMany({
+        where: { id: sessionId, waitlisted: { gt: 0 } },
+        data: { waitlisted: { decrement: 1 } },
+      })
+    }
+
+    const session = await tx.trainingSession.findUnique({
+      where: { id: sessionId },
+      select: AVAILABILITY_SELECT,
+    })
+
+    if (!session) {
+      throw new Error('Session disappeared during cancellation')
+    }
+
+    return { kind: 'cancelled', session }
   })
 }

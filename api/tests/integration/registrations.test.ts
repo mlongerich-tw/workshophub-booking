@@ -54,6 +54,10 @@ function postRegistration(sessionId: number | string, body: object) {
   return request(app).post(`/api/training-sessions/${sessionId}/registrations`).send(body)
 }
 
+function deleteRegistration(sessionId: number | string, registrationId: number | string) {
+  return request(app).delete(`/api/training-sessions/${sessionId}/registrations/${registrationId}`)
+}
+
 afterEach(async () => {
   const ids = createdSessionIds.splice(0)
   await prisma.registration.deleteMany({ where: { sessionId: { in: ids } } })
@@ -230,5 +234,198 @@ describe('POST /api/training-sessions/:id/registrations', () => {
     expect(positionsOf(responses)).toEqual([1, 2, 3, 4, 5])
     expect(await waitlistedCount(sessionId)).toBe(5)
     expect(await registeredCount(sessionId)).toBe(1)
+  })
+})
+
+describe('DELETE /api/training-sessions/:id/registrations/:registrationId', () => {
+  it('returns 200 with status cancelled, marks registration cancelled in DB, and decrements registered count', async () => {
+    const sessionId = await createSession(5, 0)
+    const created = await postRegistration(sessionId, {
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+    })
+    const registrationId: number = created.body.registration.id
+
+    const response = await deleteRegistration(sessionId, registrationId)
+
+    expect(response.status).toBe(200)
+    expect(response.body.status).toBe('cancelled')
+    expect(response.body.session).toEqual({
+      id: sessionId,
+      capacity: 5,
+      registered: 0,
+      waitlisted: 0,
+    })
+    const stored = await prisma.registration.findUnique({ where: { id: registrationId } })
+    expect(stored?.status).toBe('cancelled')
+    expect(await registeredCount(sessionId)).toBe(0)
+    const detail = await request(app).get(`/api/training-sessions/${sessionId}`)
+    expect(detail.status).toBe(200)
+    expect(detail.body.registered).toBe(0)
+  })
+
+  it('cancels a waitlisted registration without decrementing registered', async () => {
+    const sessionId = await createSession(1, 0)
+    await postRegistration(sessionId, { name: 'Ada', email: 'ada@example.com' })
+    const waitlisted = await postRegistration(sessionId, {
+      name: 'Grace',
+      email: 'grace@example.com',
+    })
+    const waitlistedId: number = waitlisted.body.registration.id
+
+    const response = await deleteRegistration(sessionId, waitlistedId)
+
+    expect(response.status).toBe(200)
+    expect(response.body.status).toBe('cancelled')
+    expect(response.body.session).toEqual({
+      id: sessionId,
+      capacity: 1,
+      registered: 1,
+      waitlisted: 0,
+    })
+    expect(await registeredCount(sessionId)).toBe(1)
+    expect(await waitlistedCount(sessionId)).toBe(0)
+    expect(await statusesFor(sessionId)).toEqual(['confirmed', 'cancelled'])
+  })
+
+  it('returns 400 for a non-numeric session id or registration id on DELETE', async () => {
+    const sessionId = await createSession(5, 0)
+
+    const badSession = await deleteRegistration('abc', 1)
+    const badRegistration = await deleteRegistration(sessionId, 'xyz')
+
+    expect(badSession.status).toBe(400)
+    expect(badSession.body.error).toBe('Invalid session ID')
+    expect(badRegistration.status).toBe(400)
+    expect(badRegistration.body.error).toBe('Invalid registration ID')
+  })
+
+  it('returns 404 when the registration does not exist', async () => {
+    const sessionId = await createSession(5, 0)
+
+    const response = await deleteRegistration(sessionId, 999999)
+
+    expect(response.status).toBe(404)
+    expect(response.body).toEqual({ error: 'Registration not found' })
+    expect(await registeredCount(sessionId)).toBe(0)
+  })
+
+  it('returns 404 when the registration belongs to a different session', async () => {
+    const sessionA = await createSession(5, 0)
+    const sessionB = await createSession(5, 0)
+    const created = await postRegistration(sessionA, {
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+    })
+    const regId: number = created.body.registration.id
+
+    const response = await deleteRegistration(sessionB, regId)
+
+    expect(response.status).toBe(404)
+    expect(response.body).toEqual({ error: 'Registration not found' })
+    const stored = await prisma.registration.findUnique({ where: { id: regId } })
+    expect(stored?.status).toBe('confirmed')
+    expect(await registeredCount(sessionA)).toBe(1)
+  })
+
+  it('returns 404 when the session does not exist', async () => {
+    const sessionId = await createSession(5, 0)
+    await prisma.trainingSession.delete({ where: { id: sessionId } })
+
+    const response = await deleteRegistration(sessionId, 1)
+
+    expect(response.status).toBe(404)
+    expect(response.body).toEqual({ error: 'Registration not found' })
+  })
+
+  it('returns 409 when cancelling an already-cancelled registration', async () => {
+    const sessionId = await createSession(5, 0)
+    const created = await postRegistration(sessionId, {
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+    })
+    const registrationId: number = created.body.registration.id
+
+    const first = await deleteRegistration(sessionId, registrationId)
+    expect(first.status).toBe(200)
+    expect(first.body.session.registered).toBe(0)
+
+    const second = await deleteRegistration(sessionId, registrationId)
+
+    expect(second.status).toBe(409)
+    expect(second.body).toEqual({ error: 'Registration is already cancelled' })
+    const stored = await prisma.registration.findUnique({ where: { id: registrationId } })
+    expect(stored?.status).toBe('cancelled')
+    expect(await registeredCount(sessionId)).toBe(0)
+  })
+
+  it('handles concurrent duplicate cancellations without double-decrementing', async () => {
+    const sessionId = await createSession(5, 0)
+    const first = await postRegistration(sessionId, {
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+    })
+    await postRegistration(sessionId, {
+      name: 'Grace Hopper',
+      email: 'grace@example.com',
+    })
+    const firstId: number = first.body.registration.id
+    expect(await registeredCount(sessionId)).toBe(2)
+
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => deleteRegistration(sessionId, firstId))
+    )
+
+    const statuses = responses.map((r) => r.status).sort((a, b) => a - b)
+    expect(statuses).toEqual([200, 409, 409, 409, 409])
+    for (const conflict of responses.filter((r) => r.status === 409)) {
+      expect(conflict.body).toEqual({ error: 'Registration is already cancelled' })
+    }
+    expect(await registeredCount(sessionId)).toBe(1)
+    const stored = await statusesFor(sessionId)
+    expect(stored.filter((s) => s === 'confirmed')).toHaveLength(1)
+    expect(stored.filter((s) => s === 'cancelled')).toHaveLength(1)
+  })
+
+  it('keeps capacity and counts consistent when cancellation and booking run concurrently', async () => {
+    const sessionId = await createSession(1, 0)
+    const first = await postRegistration(sessionId, {
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+    })
+    const firstId: number = first.body.registration.id
+    expect(await registeredCount(sessionId)).toBe(1)
+
+    const [cancelResponse, ...postResponses] = await Promise.all([
+      deleteRegistration(sessionId, firstId),
+      postRegistration(sessionId, { name: 'Grace Hopper', email: 'grace@example.com' }),
+      postRegistration(sessionId, { name: 'Alan Turing', email: 'alan@example.com' }),
+      postRegistration(sessionId, { name: 'Katherine Johnson', email: 'katherine@example.com' }),
+    ])
+
+    expect(cancelResponse.status).toBe(200)
+    for (const res of postResponses) {
+      expect([201, 202]).toContain(res.status)
+    }
+
+    const confirmedPosts = postResponses.filter((r) => r.status === 201).length
+    const waitlistedPosts = postResponses.filter((r) => r.status === 202).length
+    expect(confirmedPosts + waitlistedPosts).toBe(3)
+
+    const stored = await statusesFor(sessionId)
+    const confirmedRowCount = stored.filter((s) => s === 'confirmed').length
+    const waitlistedRowCount = stored.filter((s) => s === 'waitlisted').length
+    const cancelledRowCount = stored.filter((s) => s === 'cancelled').length
+    const registered = await registeredCount(sessionId)
+    const waitlisted = await waitlistedCount(sessionId)
+
+    expect(cancelledRowCount).toBe(1)
+    expect(confirmedRowCount).toBe(confirmedPosts)
+    expect(waitlistedRowCount).toBe(waitlistedPosts)
+    expect(registered).toBeGreaterThanOrEqual(0)
+    expect(registered).toBeLessThanOrEqual(1)
+    expect(waitlisted).toBeGreaterThanOrEqual(0)
+    expect(registered).toBe(confirmedRowCount)
+    expect(waitlisted).toBe(waitlistedRowCount)
   })
 })
