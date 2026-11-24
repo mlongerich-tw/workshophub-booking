@@ -30,7 +30,7 @@ Key directories:
 ### Build / test
 Always use the Makefile, never ad-hoc scripts: `make setup`, `make dev` (API on :3001), `make test`, `make test-unit`, `make lint`, `make format-check`, `make build`, `make reset-db`, `make branch-check`, `make reasons-lint`.
 
-The pre-commit hook runs `branch-check` and `reasons-lint`. `/sensor-and-fix` runs every sensor and fixes failures; `/finish-dev` runs it, commits and moves the card to In Review.
+The pre-commit hook runs `branch-check` and `reasons-lint` on the staged canvases; the pre-push hook runs `reasons-lint` on every pushed commit. `/sensor-and-fix` runs every sensor and fixes failures; `/finish-dev` runs it, commits and moves the card to In Review.
 
 ### Coding standards
 - **No `any`.** Use precise types, `unknown` with narrowing, or generics. Types are the contract between `api/` and `app/`, so `any` hides breakage there.

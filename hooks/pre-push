@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Pre-push hook: run tests, lint, format check, and security scan before pushing.
+# Pre-push hook: run REASONS lint, tests, lint, format check, and security scan before pushing.
 # Install via: chmod +x hooks/pre-push && cp hooks/pre-push .git/hooks/pre-push
 # Or use Husky (configured in package.json).
 
 set -e
 
+# Git passes the refs being pushed on stdin; keep them for the REASONS lint.
+push_refs=$(cat)
+
 echo "Running pre-push checks..."
+
+echo "▶ REASONS canvas (pushed commits)"
+printf '%s\n' "$push_refs" | make --no-print-directory reasons-lint REASONS_LINT_ARGS=--pre-push
 
 echo "▶ Tests"
 pnpm run test

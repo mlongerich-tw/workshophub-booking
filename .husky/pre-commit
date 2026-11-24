@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
-# Pre-commit sensors: branch naming and the REASONS-Canvas structure.
+# Pre-commit sensors: branch naming and the REASONS-Canvas structure
+# (the staged canvases, i.e. what this commit records).
 # Fix the cause; never bypass with --no-verify.
 make branch-check
-make reasons-lint
+make reasons-lint REASONS_LINT_ARGS=--staged
