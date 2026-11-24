@@ -213,7 +213,7 @@ workshophub/
 
 | Workflow         | Trigger         | Runner        | Purpose                                                      |
 |------------------|-----------------|---------------|--------------------------------------------------------------|
-| `pr-check`       | PR to main      | GitHub-hosted | Tests, lint, format check                                    |
+| `pr-check`       | PR to main      | GitHub-hosted | Tests, lint, format check, REASONS lint                                  |
 | `security`       | Push/PR to main | GitHub-hosted | Gitleaks (disabled until licensed), Trivy (disabled — trainees re-enable in Workshop 8) |
 | `build-and-prod` | Push to main    | GitHub-hosted | `make build` only (no prod container start)                  |
 
