@@ -3,8 +3,20 @@
 # or latc-xx-<slug> (tooling work with no Jira card).
 #
 # Usage: scripts/branch-name-check.sh [branch]   (default: the current branch)
-# Exit 0 = ok, 1 = bad name. Run via `make branch-check` and the pre-commit hook.
+#        scripts/branch-name-check.sh --pre-push  (reads git's pre-push stdin and checks
+#        every pushed REMOTE branch name; deletions and tags are skipped)
+# Exit 0 = ok, 1 = bad name. Run via `make branch-check` (pre-commit, pre-push) and CI.
 set -u
+
+if [ "${1-}" = --pre-push ]; then
+  status=0
+  while read -r _lref lsha rref _rsha; do
+    case "${lsha:-}" in *[!0]*) ;; *) continue ;; esac # all zeros = branch deletion
+    case "${rref:-}" in refs/heads/*) ;; *) continue ;; esac
+    bash "$0" "${rref#refs/heads/}" </dev/null || status=1
+  done
+  exit $status
+fi
 
 if [ $# -ge 1 ]; then
   branch=$1

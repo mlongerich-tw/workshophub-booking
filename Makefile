@@ -39,12 +39,14 @@ build:
 	pnpm run build
 
 ## branch-check: Fail unless the branch is latc-<n>-<slug> (or latc-xx-<slug> for tooling work)
+##   Checks the current branch; the pre-push hook passes BRANCH_CHECK_ARGS=--pre-push
 branch-check:
-	@bash scripts/branch-name-check.sh
+	@bash scripts/branch-name-check.sh $(BRANCH_CHECK_ARGS)
 
 ## reasons-lint: Fail unless SPDD canvases have all REASONS sections, and story source changes have a canvas
+##   Lints the working copy; hooks pass REASONS_LINT_ARGS=--staged (pre-commit) or --pre-push (pre-push)
 reasons-lint:
-	@bash scripts/reasons-lint.sh
+	@bash scripts/reasons-lint.sh $(REASONS_LINT_ARGS)
 
 ## sync-opencode: Regenerate the OpenCode config from the Claude setup (Claude is the source of truth)
 sync-opencode:

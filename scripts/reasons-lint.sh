@@ -8,11 +8,19 @@
 #    for that card (spdd/prompt/LATC-<n>-*.md) must exist. latc-xx and other
 #    branches are exempt (branch-name-check.sh polices names).
 #
-# Usage: scripts/reasons-lint.sh [--dir <canvas dir>] [--branch <name>] [-- <changed path>...]
-#   --dir     default spdd/prompt
-#   --branch  default the current branch
-#   -- paths  changed files to check; default: everything changed since the merge
-#             base with main (committed, staged, unstaged and untracked)
+# Usage: scripts/reasons-lint.sh [--dir <canvas dir>] [--branch <name>]
+#                                [--staged | --rev <commit> | --pre-push] [-- <changed path>...]
+#   --dir       default spdd/prompt
+#   --branch    default the current branch
+#   (no mode)   lint the working copy; changes = everything since the merge base with
+#               main (committed, staged, unstaged, untracked). Used by `make reasons-lint`.
+#   --staged    lint the canvases as staged (what `git commit` will record); changes =
+#               merge base..index. Used by the pre-commit hook.
+#   --rev C     lint the canvases in commit C; changes = merge base..C.
+#   --pre-push  read git's pre-push stdin (<local ref> <sha> <remote ref> <sha>) and run
+#               --rev for every pushed branch commit, with that branch's name. Used by
+#               the pre-push hook. Deletions and tags are skipped.
+#   -- paths    override the changed-file list
 # Exit 0 = ok, 1 = violations (listed on stderr), 2 = usage error.
 set -u
 
@@ -22,35 +30,112 @@ branch=
 branch_set=0
 changed_set=0
 changed=()
+mode=worktree
+modes=0
+rev=
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir) dir=${2:?--dir needs a value}; shift 2 ;;
     --branch) branch=${2-}; branch_set=1; shift 2 ;;
+    --staged) mode=index; modes=$((modes + 1)); shift ;;
+    --rev) mode=rev; rev=${2:?--rev needs a commit}; modes=$((modes + 1)); shift 2 ;;
+    --pre-push) mode=pre-push; modes=$((modes + 1)); shift ;;
     --) shift; changed_set=1; changed=("$@"); break ;;
     *) echo "reasons-lint: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
+dir=${dir%/}
+
+if [ "$modes" -gt 1 ]; then
+  echo "reasons-lint: use only one of --staged, --rev, --pre-push" >&2
+  exit 2
+fi
+
+# --- pre-push: lint every pushed branch tip ---------------------------------
+if [ "$mode" = pre-push ]; then
+  status=0
+  while read -r lref lsha _rref _rsha; do
+    [ -n "${lref:-}" ] || continue
+    case "${lsha:-}" in *[!0]*) ;; *) continue ;; esac # all zeros = branch deletion
+    case "$lref" in refs/heads/*) ;; *) continue ;; esac
+    bash "$0" --dir "$dir" --branch "${lref#refs/heads/}" --rev "$lsha" </dev/null || status=1
+  done
+  exit $status
+fi
+
+if [ "$mode" = rev ] && ! git rev-parse --verify --quiet "$rev^{commit}" >/dev/null; then
+  echo "reasons-lint: '$rev' is not a commit" >&2
+  exit 2
+fi
 
 [ "$branch_set" = 1 ] || branch=$(git branch --show-current 2>/dev/null || true)
 
-if [ "$changed_set" = 0 ]; then
-  base=
-  for ref in main origin/main; do
-    if base=$(git merge-base "$ref" HEAD 2>/dev/null); then break; fi
-    base=
-  done
-  list=$(
-    {
+# Changed paths for the chosen mode, relative to the merge base with main.
+changed_files() {
+  case "$mode" in
+    worktree)
       [ -n "$base" ] && git diff --name-only "$base"
       git diff --cached --name-only
       git ls-files --others --exclude-standard
-    } 2>/dev/null | sort -u
-  )
+      ;;
+    index)
+      if [ -n "$base" ]; then git diff --cached --name-only "$base"; else git diff --cached --name-only; fi
+      ;;
+    rev)
+      if [ -n "$base" ]; then git diff --name-only "$base" "$rev"; else git show --name-only --pretty= "$rev"; fi
+      ;;
+  esac
+}
+
+# --- changed files ----------------------------------------------------------
+if [ "$changed_set" = 0 ]; then
+  tip=HEAD
+  [ "$mode" = rev ] && tip=$rev
+  base=
+  for ref in main origin/main; do
+    if base=$(git merge-base "$ref" "$tip" 2>/dev/null); then break; fi
+    base=
+  done
+  list=$(changed_files 2>/dev/null | sort -u)
   while IFS= read -r line; do
     [ -n "$line" ] && changed+=("$line")
   done <<<"$list"
 fi
+
+# --- canvases in the chosen source (working copy, index or commit) ----------
+names=()
+case "$mode" in
+  worktree)
+    shopt -s nullglob
+    for f in "$dir"/*.md; do names+=("$(basename "$f")"); done
+    ;;
+  index | rev)
+    if [ "$mode" = index ]; then
+      listing=$(git ls-files -- "$dir" 2>/dev/null)
+    else
+      listing=$(git ls-tree -r --name-only "$rev" -- "$dir" 2>/dev/null)
+    fi
+    while IFS= read -r p; do
+      rel=${p#"$dir"/}
+      case "$rel" in */* | "") continue ;; *.md) names+=("$rel") ;; esac
+    done <<<"$listing"
+    ;;
+esac
+
+read_canvas() {
+  case "$mode" in
+    worktree) cat "$dir/$1" ;;
+    index) git show ":$dir/$1" ;;
+    rev) git show "$rev:$dir/$1" ;;
+  esac
+}
+
+case "$mode" in
+  worktree) where="working copy" ;;
+  index) where="staged" ;;
+  rev) where="commit $(git rev-parse --short "$rev")" ;;
+esac
 
 errors=0
 fail() {
@@ -59,12 +144,9 @@ fail() {
 }
 
 # --- 1. Structure of every canvas -------------------------------------------
-shopt -s nullglob
-canvases=("$dir"/*.md)
-for file in ${canvases[@]+"${canvases[@]}"}; do
-  name=$(basename "$file")
+for name in ${names[@]+"${names[@]}"}; do
   problems=$(
-    awk -v expected="$SECTIONS" '
+    read_canvas "$name" | awk -v expected="$SECTIONS" '
       BEGIN { n = split(expected, want, " "); for (i = 1; i <= n; i++) idx[want[i]] = i }
       /^[ \t]*(```|~~~)/ { fence = !fence; if (cur != "") body[cur]++; next }
       !fence && /^## / {
@@ -89,7 +171,7 @@ for file in ${canvases[@]+"${canvases[@]}"}; do
           last = idx[order[i]]
         }
       }
-    ' "$file"
+    '
   )
   while IFS= read -r p; do
     [ -n "$p" ] && fail "$name: $p"
@@ -104,15 +186,19 @@ if [[ "$branch" =~ ^latc-([0-9]+)- ]]; then
     case "$path" in api/src/* | app/src/*) touches_src=1 ;; esac
   done
   if [ "$touches_src" = 1 ]; then
-    found=("$dir/$key"-*.md)
-    if [ ${#found[@]} -eq 0 ]; then
-      fail "no REASONS canvas for $key in $dir/, but this branch changes api/src or app/src. Create one with /spdd-reasons-canvas."
+    found=0
+    for name in ${names[@]+"${names[@]}"}; do
+      case "$name" in "$key"-*.md) found=1 ;; esac
+    done
+    if [ "$found" = 0 ]; then
+      fail "no REASONS canvas for $key in $dir/ ($where), but this branch changes api/src or app/src. Create one with /spdd-reasons-canvas."
     fi
   fi
 fi
 
 if [ "$errors" -gt 0 ]; then
-  echo "reasons-lint: $errors problem(s) found." >&2
+  echo "reasons-lint: $errors problem(s) found ($where)." >&2
+  [ "$mode" = index ] && echo "reasons-lint: the staged version is checked; fix the canvas, then git add it." >&2
   exit 1
 fi
-echo "reasons-lint: ok (${#canvases[@]} canvas(es) checked)"
+echo "reasons-lint: ok (${#names[@]} canvas(es) checked, $where)"
