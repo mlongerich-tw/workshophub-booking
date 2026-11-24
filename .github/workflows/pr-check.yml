@@ -31,6 +31,13 @@ jobs:
       - name: OpenCode parity check
         run: node scripts/sync-opencode.mjs --check
 
+      # PR branch must be latc-<n>-<slug> or latc-xx-<slug>, as the pre-commit hook
+      # enforces locally. head_ref is passed via env and quoted (untrusted input).
+      - name: Branch name check
+        run: bash scripts/branch-name-check.sh "$HEAD_REF"
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+
       # Lints the canvases in the PR merge commit (what will land), using the PR
       # branch name for the "story source changes need a canvas" rule. Catches
       # commits and pushes made with --no-verify. The branch name is passed via
